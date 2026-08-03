@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gpms-postgres
+    environment:
+      POSTGRES_DB: gpms
+      POSTGRES_USER: gpms
+      POSTGRES_PASSWORD: gpms
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U gpms -d gpms" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: gpms-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gpms-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/gpms
+      SPRING_DATASOURCE_USERNAME: gpms
+      SPRING_DATASOURCE_PASSWORD: gpms
+      APP_JWT_SECRET: change-me-to-a-32-character-minimum-secret
+      APP_STORAGE_MINIO_ENDPOINT: http://minio:9000
+      APP_STORAGE_MINIO_ACCESS_KEY: minioadmin
+      APP_STORAGE_MINIO_SECRET_KEY: minioadmin
+      APP_STORAGE_MINIO_BUCKET: gpms-attachments
+    ports:
+      - "${BACKEND_PORT:-8081}:8080"
+
+volumes:
+  postgres_data:
+  minio_data:
