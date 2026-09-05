@@ -1,0 +1,5 @@
+# EnvironmentPostProcessors run before the context starts, which is
+# the only point early enough to rewrite the datasource URL before
+# Flyway and Hibernate try to connect.
+org.springframework.boot.env.EnvironmentPostProcessor=\
+com.gpms.backend.config.DatabaseUrlEnvironmentPostProcessor

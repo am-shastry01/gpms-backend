@@ -1,0 +1,60 @@
+# =============================================================
+# Render Blueprint
+# =============================================================
+#
+# Render dashboard -> New -> Blueprint -> point at this repo.
+# It creates the database and the web service together and wires
+# the connection string between them, so nothing is typed by hand.
+#
+# The one value you must supply yourself is APP_PUBLIC_BASE_URL -
+# see the note on it below.
+
+databases:
+  - name: gpms-db
+    databaseName: gpms
+    user: gpms
+    plan: free
+
+services:
+  - type: web
+    name: gpms-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /actuator/health
+
+    envVars:
+
+      # Render publishes this as postgresql://user:pass@host/db,
+      # which is not a JDBC URL. DatabaseUrlEnvironmentPostProcessor
+      # splits it into spring.datasource.url/username/password before
+      # Flyway runs.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gpms-db
+          property: connectionString
+
+      # A fresh 32+ character secret, generated once by Render and
+      # never committed. Changing it invalidates every issued token.
+      - key: APP_JWT_SECRET
+        generateValue: true
+
+      # The address a DRIVER'S PHONE can reach, used to build the SMS
+      # pass link. Set this to your service's own Render URL, e.g.
+      #   https://gpms-backend.onrender.com
+      # It cannot be derived automatically because the hostname is
+      # only known after the service is first created.
+      - key: APP_PUBLIC_BASE_URL
+        sync: false
+
+      # Driver SMS goes to the log until you add a real provider.
+      # Set to "twilio" and add the three credentials to send.
+      - key: APP_SMS_PROVIDER
+        value: logging
+
+      - key: APP_BOOTSTRAP_ENABLED
+        value: "true"
+
+      # Change these immediately after the first successful deploy.
+      - key: APP_BOOTSTRAP_ADMIN_PASSWORD
+        generateValue: true

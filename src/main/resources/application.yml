@@ -1,5 +1,8 @@
 server:
-  port: 8080
+  # Render (and most PaaS hosts) inject the port to listen on as
+  # PORT and route external traffic to it. Hardcoding 8080 means the
+  # health check never connects and the deploy is marked failed.
+  port: ${PORT:8080}
 
 spring:
   application:
