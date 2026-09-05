@@ -39,6 +39,35 @@ springdoc:
     path: /swagger-ui.html
 
 app:
+  # ---------------------------------------------------------------
+  # The address a DRIVER'S PHONE can reach this backend on.
+  #
+  # This goes into the SMS link, so "localhost" is useless - that
+  # would resolve to the driver's own handset. Use either:
+  #   * your PC's LAN IP, for a phone on the same WiFi
+  #       http://192.168.1.5:8081
+  #   * an ngrok / tunnel URL, to test from any network
+  #       https://<subdomain>.ngrok-free.app
+  # ---------------------------------------------------------------
+  public-base-url: ${APP_PUBLIC_BASE_URL:http://192.168.1.5:8081}
+
+  sms:
+    # Turn all driver SMS off without touching anything else.
+    enabled: ${APP_SMS_ENABLED:true}
+
+    # "logging" writes the message and link to the backend console
+    # instead of sending it - no account, no cost, whole flow still
+    # testable. Switch to "twilio" once you have credentials.
+    provider: ${APP_SMS_PROVIDER:logging}
+
+    # How long a driver's pass link stays usable.
+    link-ttl-hours: ${APP_SMS_LINK_TTL_HOURS:72}
+
+    twilio:
+      account-sid: ${APP_SMS_TWILIO_ACCOUNT_SID:}
+      auth-token: ${APP_SMS_TWILIO_AUTH_TOKEN:}
+      from-number: ${APP_SMS_TWILIO_FROM_NUMBER:}
+
   jwt:
     secret: ${APP_JWT_SECRET:change-me-to-a-32-character-minimum-secret}
     access-token-minutes: ${APP_JWT_ACCESS_MINUTES:1440}

@@ -10,6 +10,13 @@ public record DashboardMetricsResponse(
         long pendingApprovals,
         long approvedToday,
         long exitedToday,
+        /**
+         * Added so the admin dashboard can render its "rejected" and
+         * "completed" tiles from one call. The app previously had to
+         * pull two extra pages of requests and count them itself.
+         */
+        long rejectedToday,
+        long completedToday,
         List<VendorDispatchSummaryResponse> vendorDispatches
 ) {
 }

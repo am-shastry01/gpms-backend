@@ -53,8 +53,14 @@ public class AuthService {
                         user.getUsername(),
                         user.getFullName(),
                         user.getEmail(),
-                        user.getWarehouse().getId(),
-                        user.getWarehouse().getName(),
+                        /*
+                         * A user is not guaranteed to have a warehouse -
+                         * a global admin typically has none. Reading
+                         * through a null warehouse here made login fail
+                         * with a 500 for those accounts.
+                         */
+                        user.getWarehouse() == null ? null : user.getWarehouse().getId(),
+                        user.getWarehouse() == null ? null : user.getWarehouse().getName(),
                         user.getRoles().stream().map(role -> role.getCode()).sorted().toList()
                 )
         );

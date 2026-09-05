@@ -55,6 +55,14 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**")
                         .permitAll()
                         .requestMatchers(
+                                /*
+                                 * The driver's pass page. Opened from
+                                 * an SMS link on a phone with no
+                                 * account, so it cannot require a
+                                 * token - the random id in the URL is
+                                 * the credential, and it expires.
+                                 */
+                                "/public/gate-pass/**",
                                 "/api/v1/auth/**",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",

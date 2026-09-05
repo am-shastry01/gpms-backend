@@ -43,6 +43,10 @@ public class GatePassRequest extends BaseEntity {
     @JoinColumn(name = "exited_by_user_id")
     private User exitedBy;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "entered_by_user_id")
+    private User enteredBy;
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "vendor_id", nullable = false)
     private Vendor vendor;
@@ -82,6 +86,25 @@ public class GatePassRequest extends BaseEntity {
 
     @Column(name = "exit_time")
     private Instant exitTime;
+
+    @Column(name = "entry_time")
+    private Instant entryTime;
+
+    /*
+     * Addresses the driver's public pass link. Not the primary key,
+     * so it can expire, be revoked and be used once.
+     */
+    @Column(name = "access_token", length = 64)
+    private String accessToken;
+
+    @Column(name = "token_issued_at")
+    private Instant tokenIssuedAt;
+
+    @Column(name = "token_expires_at")
+    private Instant tokenExpiresAt;
+
+    @Column(name = "token_consumed_at")
+    private Instant tokenConsumedAt;
 
     @Column(name = "qr_content", length = 2000)
     private String qrContent;
@@ -132,6 +155,14 @@ public class GatePassRequest extends BaseEntity {
 
     public void setExitedBy(User exitedBy) {
         this.exitedBy = exitedBy;
+    }
+
+    public User getEnteredBy() {
+        return enteredBy;
+    }
+
+    public void setEnteredBy(User enteredBy) {
+        this.enteredBy = enteredBy;
     }
 
     public Vendor getVendor() {
@@ -228,6 +259,46 @@ public class GatePassRequest extends BaseEntity {
 
     public void setExitTime(Instant exitTime) {
         this.exitTime = exitTime;
+    }
+
+    public Instant getEntryTime() {
+        return entryTime;
+    }
+
+    public void setEntryTime(Instant entryTime) {
+        this.entryTime = entryTime;
+    }
+
+    public String getAccessToken() {
+        return accessToken;
+    }
+
+    public void setAccessToken(String accessToken) {
+        this.accessToken = accessToken;
+    }
+
+    public Instant getTokenIssuedAt() {
+        return tokenIssuedAt;
+    }
+
+    public void setTokenIssuedAt(Instant tokenIssuedAt) {
+        this.tokenIssuedAt = tokenIssuedAt;
+    }
+
+    public Instant getTokenExpiresAt() {
+        return tokenExpiresAt;
+    }
+
+    public void setTokenExpiresAt(Instant tokenExpiresAt) {
+        this.tokenExpiresAt = tokenExpiresAt;
+    }
+
+    public Instant getTokenConsumedAt() {
+        return tokenConsumedAt;
+    }
+
+    public void setTokenConsumedAt(Instant tokenConsumedAt) {
+        this.tokenConsumedAt = tokenConsumedAt;
     }
 
     public String getQrContent() {

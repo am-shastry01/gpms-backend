@@ -13,7 +13,9 @@ import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 @EnableConfigurationProperties({
         JwtProperties.class,
         MinioProperties.class,
-        BootstrapProperties.class
+        BootstrapProperties.class,
+        com.gpms.backend.config.SmsProperties.class,
+        com.gpms.backend.config.AppProperties.class
 })
 public class WarehouseDispatchApplication {
 

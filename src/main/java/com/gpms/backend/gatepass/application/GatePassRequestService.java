@@ -2,6 +2,7 @@ package com.gpms.backend.gatepass.application;
 
 import com.gpms.backend.audit.application.AuditLogService;
 import com.gpms.backend.common.exception.BusinessException;
+import com.gpms.backend.common.exception.ConflictException;
 import com.gpms.backend.common.exception.ResourceNotFoundException;
 import com.gpms.backend.common.exception.UnauthorizedOperationException;
 import com.gpms.backend.common.service.CurrentUserService;
@@ -10,11 +11,13 @@ import com.gpms.backend.driver.infrastructure.DriverRepository;
 import com.gpms.backend.gatepass.api.dto.ApprovalActionRequest;
 import com.gpms.backend.gatepass.api.dto.ApprovalTrailResponse;
 import com.gpms.backend.gatepass.api.dto.AttachmentResponse;
-import com.gpms.backend.gatepass.api.dto.ExitConfirmationRequest;
+import com.gpms.backend.gatepass.api.dto.GateActionRequest;
 import com.gpms.backend.gatepass.api.dto.GatePassCreateRequest;
 import com.gpms.backend.gatepass.api.dto.GatePassItemRequest;
 import com.gpms.backend.gatepass.api.dto.GatePassItemResponse;
 import com.gpms.backend.gatepass.api.dto.GatePassResponse;
+import com.gpms.backend.gatepass.api.dto.PassVerificationResponse;
+import com.gpms.backend.gatepass.api.dto.PassVerificationResponse.VerificationOutcome;
 import com.gpms.backend.gatepass.domain.Approval;
 import com.gpms.backend.gatepass.domain.ApprovalAction;
 import com.gpms.backend.gatepass.domain.Attachment;
@@ -25,6 +28,7 @@ import com.gpms.backend.gatepass.infrastructure.ApprovalRepository;
 import com.gpms.backend.gatepass.infrastructure.AttachmentRepository;
 import com.gpms.backend.gatepass.infrastructure.GatePassItemRepository;
 import com.gpms.backend.gatepass.infrastructure.GatePassRequestRepository;
+import com.gpms.backend.driver.notification.DriverNotificationService;
 import com.gpms.backend.notification.application.NotificationService;
 import com.gpms.backend.storage.application.ObjectStorageService;
 import com.gpms.backend.user.domain.Role;
@@ -69,6 +73,8 @@ public class GatePassRequestService {
     private final NotificationService notificationService;
     private final AuditLogService auditLogService;
     private final ObjectStorageService objectStorageService;
+    private final GatePassTokenService gatePassTokenService;
+    private final DriverNotificationService driverNotificationService;
 
     public GatePassRequestService(
             GatePassRequestRepository gatePassRequestRepository,
@@ -85,7 +91,9 @@ public class GatePassRequestService {
             QrCodeService qrCodeService,
             NotificationService notificationService,
             AuditLogService auditLogService,
-            ObjectStorageService objectStorageService
+            ObjectStorageService objectStorageService,
+            GatePassTokenService gatePassTokenService,
+            DriverNotificationService driverNotificationService
     ) {
         this.gatePassRequestRepository = gatePassRequestRepository;
         this.gatePassItemRepository = gatePassItemRepository;
@@ -102,6 +110,8 @@ public class GatePassRequestService {
         this.notificationService = notificationService;
         this.auditLogService = auditLogService;
         this.objectStorageService = objectStorageService;
+        this.gatePassTokenService = gatePassTokenService;
+        this.driverNotificationService = driverNotificationService;
     }
 
     public GatePassResponse create(GatePassCreateRequest request) {
@@ -228,8 +238,23 @@ public class GatePassRequestService {
         approval.setActionTime(Instant.now());
         approvalRepository.save(approval);
 
+        /*
+         * The driver has no account, so the pass reaches them as a
+         * link addressed by a one-time token. Issued here, before the
+         * save, so the token is persisted with the approval.
+         */
+        String driverToken = gatePassTokenService.issue(gatePassRequest);
+
         GatePassRequest saved = gatePassRequestRepository.save(gatePassRequest);
         notifyApproval(saved);
+
+        /*
+         * Texting must never undo an approval that has already been
+         * decided, so this records its own failures rather than
+         * throwing.
+         */
+        driverNotificationService.sendGatePass(saved, driverToken);
+
         auditLogService.record(
                 "GatePassRequest",
                 saved.getId().toString(),
@@ -285,21 +310,19 @@ public class GatePassRequestService {
         return toResponse(saved);
     }
 
-    public GatePassResponse markExit(UUID requestId, ExitConfirmationRequest request) {
+    public GatePassResponse markExit(UUID requestId, GateActionRequest request) {
         User currentUser = currentUserService.requireCurrentUser();
         ensureSecurityOrAdmin(currentUser);
         GatePassRequest gatePassRequest = findAccessibleRequest(requestId);
         if (gatePassRequest.getStatus() != GatePassStatus.GATE_GENERATED
-                && gatePassRequest.getStatus() != GatePassStatus.APPROVED) {
+                && gatePassRequest.getStatus() != GatePassStatus.APPROVED
+                && gatePassRequest.getStatus() != GatePassStatus.ENTERED) {
             throw new BusinessException("Only approved gate passes can be marked as exited");
         }
         gatePassRequest.setExitedBy(currentUser);
         gatePassRequest.setExitTime(Instant.now());
         gatePassRequest.setStatus(GatePassStatus.EXITED);
-        if (request.remarks() != null && !request.remarks().isBlank()) {
-            String existingRemarks = gatePassRequest.getRemarks() == null ? "" : gatePassRequest.getRemarks() + "\n";
-            gatePassRequest.setRemarks(existingRemarks + "Exit: " + request.remarks().trim());
-        }
+        appendRemark(gatePassRequest, "Exit", request == null ? null : request.remarks());
         GatePassRequest saved = gatePassRequestRepository.save(gatePassRequest);
 
         List<User> recipients = new ArrayList<>();
@@ -324,6 +347,246 @@ public class GatePassRequestService {
         return toResponse(saved);
     }
 
+    /**
+     * Records a truck arriving at the gate.
+     *
+     * The mirror of markExit. Previously the guard app had an "Allow
+     * Entry" button with nothing behind it, because neither the
+     * endpoint nor the ENTERED status existed.
+     */
+    public GatePassResponse markEntry(UUID requestId, GateActionRequest request) {
+        User currentUser = currentUserService.requireCurrentUser();
+        ensureSecurityOrAdmin(currentUser);
+        GatePassRequest gatePassRequest = findAccessibleRequest(requestId);
+
+        if (gatePassRequest.getStatus() != GatePassStatus.GATE_GENERATED
+                && gatePassRequest.getStatus() != GatePassStatus.APPROVED) {
+            throw new BusinessException("Only approved gate passes can be checked in at the gate");
+        }
+        if (gatePassRequest.getEntryTime() != null) {
+            throw new ConflictException("This gate pass has already been checked in");
+        }
+
+        String previousStatus = gatePassRequest.getStatus().name();
+        gatePassRequest.setEnteredBy(currentUser);
+        gatePassRequest.setEntryTime(Instant.now());
+        gatePassRequest.setStatus(GatePassStatus.ENTERED);
+        appendRemark(gatePassRequest, "Entry", request == null ? null : request.remarks());
+
+        GatePassRequest saved = gatePassRequestRepository.save(gatePassRequest);
+
+        List<User> recipients = new ArrayList<>();
+        recipients.add(saved.getRequestedBy());
+        recipients.addAll(userRepository.findActiveByRoleAndWarehouse("MANAGER", saved.getWarehouse().getId()));
+        notificationService.notifyUsers(
+                recipients,
+                saved,
+                "Truck arrived at gate",
+                "Gate pass " + saved.getGatePassNumber() + " checked in at " + saved.getEntryTime()
+        );
+        auditLogService.record(
+                "GatePassRequest",
+                saved.getId().toString(),
+                "ENTERED",
+                previousStatus,
+                saved.getStatus().name(),
+                null,
+                currentUser
+        );
+        return toResponse(saved);
+    }
+
+    /**
+     * Looks a gate pass up by its human-readable number.
+     *
+     * The guard scans a QR code or types the number off a printed
+     * pass; neither gives them the UUID that GET /{id} needs.
+     */
+    @Transactional(readOnly = true)
+    public GatePassResponse getByGatePassNumber(String gatePassNumber) {
+        if (gatePassNumber == null || gatePassNumber.isBlank()) {
+            throw new BusinessException("Gate pass number is required");
+        }
+        GatePassRequest gatePassRequest = gatePassRequestRepository
+                .findByGatePassNumberIgnoreCaseAndDeletedFalse(gatePassNumber.trim())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "No gate pass found with number " + gatePassNumber));
+
+        /*
+         * Re-fetch through findAccessibleRequest so the warehouse and
+         * ownership rules are applied in exactly one place rather than
+         * being re-implemented (and drifting) here.
+         */
+        return toResponse(findAccessibleRequest(gatePassRequest.getId()));
+    }
+
+    /**
+     * Lets the requester withdraw a request that has not been decided
+     * on yet. There was previously no way to undo a submission at all.
+     */
+    public GatePassResponse cancel(UUID requestId, GateActionRequest request) {
+        User currentUser = currentUserService.requireCurrentUser();
+        GatePassRequest gatePassRequest = findAccessibleRequest(requestId);
+
+        boolean isOwner = gatePassRequest.getRequestedBy().getId().equals(currentUser.getId());
+        if (!isOwner && !hasRole(currentUser, "ADMIN") && !hasRole(currentUser, "MANAGER")) {
+            throw new UnauthorizedOperationException("You can only cancel your own requests");
+        }
+        if (gatePassRequest.getStatus() != GatePassStatus.PENDING
+                && gatePassRequest.getStatus() != GatePassStatus.DRAFT) {
+            throw new BusinessException("Only a request that is still pending can be cancelled");
+        }
+
+        String previousStatus = gatePassRequest.getStatus().name();
+        gatePassRequest.setStatus(GatePassStatus.CANCELLED);
+        appendRemark(gatePassRequest, "Cancelled", request == null ? null : request.remarks());
+
+        GatePassRequest saved = gatePassRequestRepository.save(gatePassRequest);
+        auditLogService.record(
+                "GatePassRequest",
+                saved.getId().toString(),
+                "CANCELLED",
+                previousStatus,
+                saved.getStatus().name(),
+                null,
+                currentUser
+        );
+        return toResponse(saved);
+    }
+
+    private void appendRemark(GatePassRequest gatePassRequest, String label, String remarks) {
+        if (remarks == null || remarks.isBlank()) {
+            return;
+        }
+        String existing = gatePassRequest.getRemarks() == null
+                ? ""
+                : gatePassRequest.getRemarks() + "\n";
+        gatePassRequest.setRemarks(existing + label + ": " + remarks.trim());
+    }
+
+    /**
+     * Checks a code scanned off a driver's phone at the gate.
+     *
+     * Returns a verdict for every case rather than throwing, so the
+     * guard sees "already used" or "expired" instead of a generic
+     * error they cannot act on.
+     */
+    public PassVerificationResponse verifyScannedPass(
+            String token,
+            boolean consume
+    ) {
+
+        User currentUser = currentUserService.requireCurrentUser();
+        ensureSecurityOrAdmin(currentUser);
+
+        GatePassRequest gatePassRequest = gatePassRequestRepository
+                .findByAccessTokenAndDeletedFalse(token == null ? "" : token.trim())
+                .orElse(null);
+
+        if (gatePassRequest == null) {
+            return PassVerificationResponse.of(
+                    VerificationOutcome.NOT_FOUND,
+                    "This code does not match any gate pass.",
+                    null
+            );
+        }
+
+        /*
+         * A guard may only admit trucks to their own warehouse. An
+         * admin is not pinned to one.
+         */
+        if (!hasRole(currentUser, "ADMIN")) {
+
+            UUID ownWarehouseId = currentUser.getWarehouse() == null
+                    ? null
+                    : currentUser.getWarehouse().getId();
+
+            if (ownWarehouseId == null
+                    || !gatePassRequest.getWarehouse().getId().equals(ownWarehouseId)) {
+
+                return PassVerificationResponse.of(
+                        VerificationOutcome.WRONG_WAREHOUSE,
+                        "This pass is for a different warehouse.",
+                        null
+                );
+            }
+        }
+
+        GatePassStatus status = gatePassRequest.getStatus();
+
+        if (status == GatePassStatus.EXITED || status == GatePassStatus.COMPLETED) {
+            return PassVerificationResponse.of(
+                    VerificationOutcome.ALREADY_EXITED,
+                    "This truck has already left on this pass.",
+                    toResponse(gatePassRequest)
+            );
+        }
+
+        if (status != GatePassStatus.APPROVED
+                && status != GatePassStatus.GATE_GENERATED
+                && status != GatePassStatus.ENTERED) {
+
+            return PassVerificationResponse.of(
+                    VerificationOutcome.NOT_APPROVED,
+                    "This pass is " + status.name().toLowerCase()
+                            + " and cannot be used at the gate.",
+                    toResponse(gatePassRequest)
+            );
+        }
+
+        if (gatePassTokenService.isExpired(gatePassRequest)) {
+            return PassVerificationResponse.of(
+                    VerificationOutcome.EXPIRED,
+                    "This pass link has expired. Ask for a new one.",
+                    toResponse(gatePassRequest)
+            );
+        }
+
+        /*
+         * A consumed token still verifies for a truck already inside -
+         * the guard needs to scan it again on the way out.
+         */
+        if (gatePassTokenService.isConsumed(gatePassRequest)
+                && status != GatePassStatus.ENTERED) {
+
+            return PassVerificationResponse.of(
+                    VerificationOutcome.ALREADY_USED,
+                    "This QR code has already been used at the gate.",
+                    toResponse(gatePassRequest)
+            );
+        }
+
+        if (consume && !gatePassTokenService.isConsumed(gatePassRequest)) {
+            gatePassTokenService.markConsumed(gatePassRequest);
+            gatePassRequestRepository.save(gatePassRequest);
+        }
+
+        return PassVerificationResponse.of(
+                VerificationOutcome.VALID,
+                "Approved. The truck may proceed.",
+                toResponse(gatePassRequest)
+        );
+    }
+
+    /**
+     * The driver's own view of their pass, reached from the SMS link
+     * with no login. Returns null when the token is unusable so the
+     * controller can render a plain "not valid" page.
+     */
+    @Transactional(readOnly = true)
+    public GatePassRequest findByAccessTokenForPublicPage(String token) {
+
+        GatePassRequest gatePassRequest = gatePassRequestRepository
+                .findByAccessTokenAndDeletedFalse(token == null ? "" : token.trim())
+                .orElse(null);
+
+        if (gatePassRequest == null || gatePassTokenService.isExpired(gatePassRequest)) {
+            return null;
+        }
+
+        return gatePassRequest;
+    }
+
     private void notifyApproval(GatePassRequest gatePassRequest) {
         List<User> recipients = new ArrayList<>();
         recipients.add(gatePassRequest.getRequestedBy());
@@ -337,12 +600,25 @@ public class GatePassRequestService {
 
     private Warehouse resolveWarehouse(User currentUser, UUID warehouseId) {
         if (warehouseId == null) {
+            /*
+             * gate_pass_requests.warehouse_id is NOT NULL, so falling
+             * back to a user who has no warehouse would fail deep in
+             * the persistence layer with an unhelpful message.
+             */
+            if (currentUser.getWarehouse() == null) {
+                throw new BusinessException(
+                        "Your account is not assigned to a warehouse, "
+                                + "so a warehouse must be supplied");
+            }
             return currentUser.getWarehouse();
         }
         Warehouse warehouse = warehouseRepository.findByIdAndDeletedFalse(warehouseId)
                 .orElseThrow(() -> new ResourceNotFoundException("Warehouse not found"));
-        if (!hasRole(currentUser, "ADMIN") && !warehouse.getId().equals(currentUser.getWarehouse().getId())) {
-            throw new UnauthorizedOperationException("You cannot create requests for another warehouse");
+        if (!hasRole(currentUser, "ADMIN")) {
+            if (currentUser.getWarehouse() == null
+                    || !warehouse.getId().equals(currentUser.getWarehouse().getId())) {
+                throw new UnauthorizedOperationException("You cannot create requests for another warehouse");
+            }
         }
         return warehouse;
     }
@@ -351,10 +627,13 @@ public class GatePassRequestService {
         if (hasRole(currentUser, "ADMIN")) {
             return warehouseId;
         }
-        if (warehouseId != null && !warehouseId.equals(currentUser.getWarehouse().getId())) {
+        UUID ownWarehouseId = currentUser.getWarehouse() == null
+                ? null
+                : currentUser.getWarehouse().getId();
+        if (warehouseId != null && !warehouseId.equals(ownWarehouseId)) {
             throw new UnauthorizedOperationException("You cannot access another warehouse");
         }
-        return currentUser.getWarehouse().getId();
+        return ownWarehouseId;
     }
 
     private Driver resolveDriver(GatePassCreateRequest request) {
@@ -423,8 +702,16 @@ public class GatePassRequestService {
         GatePassRequest gatePassRequest = gatePassRequestRepository.findByIdAndDeletedFalse(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Gate pass request not found"));
         User currentUser = currentUserService.requireCurrentUser();
-        if (!hasRole(currentUser, "ADMIN") && !gatePassRequest.getWarehouse().getId().equals(currentUser.getWarehouse().getId())) {
-            throw new UnauthorizedOperationException("You cannot access this gate pass");
+        /*
+         * An ADMIN may reach any warehouse. Anyone else is limited to
+         * their own - and a user with no warehouse assigned is limited
+         * to nothing, rather than dereferencing null.
+         */
+        if (!hasRole(currentUser, "ADMIN")) {
+            if (currentUser.getWarehouse() == null
+                    || !gatePassRequest.getWarehouse().getId().equals(currentUser.getWarehouse().getId())) {
+                throw new UnauthorizedOperationException("You cannot access this gate pass");
+            }
         }
         if (isEmployee(currentUser) && !gatePassRequest.getRequestedBy().getId().equals(currentUser.getId())) {
             throw new UnauthorizedOperationException("You can only access your own requests");
@@ -528,6 +815,9 @@ public class GatePassRequestService {
                 gatePassRequest.getExitedBy() != null ? gatePassRequest.getExitedBy().getId() : null,
                 gatePassRequest.getExitedBy() != null ? gatePassRequest.getExitedBy().getFullName() : null,
                 gatePassRequest.getExitTime(),
+                gatePassRequest.getEnteredBy() != null ? gatePassRequest.getEnteredBy().getId() : null,
+                gatePassRequest.getEnteredBy() != null ? gatePassRequest.getEnteredBy().getFullName() : null,
+                gatePassRequest.getEntryTime(),
                 items,
                 approvals,
                 attachments,

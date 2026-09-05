@@ -21,6 +21,8 @@ public interface GatePassRequestRepository
 
     Optional<GatePassRequest> findByGatePassNumberIgnoreCaseAndDeletedFalse(String gatePassNumber);
 
+    Optional<GatePassRequest> findByAccessTokenAndDeletedFalse(String accessToken);
+
     Page<GatePassRequest> findAllByRequestedByIdAndDeletedFalse(UUID requestedById, Pageable pageable);
 
     long countByStatusAndDeletedFalse(GatePassStatus status);
@@ -57,5 +59,55 @@ public interface GatePassRequestRepository
             @Param("fromDate") LocalDate fromDate,
             @Param("toDate") LocalDate toDate,
             @Param("warehouseId") UUID warehouseId
+    );
+
+    @Query("""
+            select count(g) from GatePassRequest g
+            where g.deleted = false
+              and g.status = :status
+              and g.updatedAt >= :start
+              and g.updatedAt < :end
+              and (:warehouseId is null or g.warehouse.id = :warehouseId)
+            """)
+    long countByStatusBetween(
+            @Param("status") GatePassStatus status,
+            @Param("start") Instant start,
+            @Param("end") Instant end,
+            @Param("warehouseId") UUID warehouseId
+    );
+
+    @Query("""
+            select count(g) from GatePassRequest g
+            where g.deleted = false
+              and g.entryTime >= :start
+              and g.entryTime < :end
+              and (:warehouseId is null or g.warehouse.id = :warehouseId)
+            """)
+    long countEnteredBetween(
+            @Param("start") Instant start,
+            @Param("end") Instant end,
+            @Param("warehouseId") UUID warehouseId
+    );
+
+    @Query("""
+            select count(g) from GatePassRequest g
+            where g.deleted = false
+              and g.status in :statuses
+              and (:warehouseId is null or g.warehouse.id = :warehouseId)
+            """)
+    long countByStatusesAndWarehouse(
+            @Param("statuses") List<GatePassStatus> statuses,
+            @Param("warehouseId") UUID warehouseId
+    );
+
+    @Query("""
+            select count(g) from GatePassRequest g
+            where g.deleted = false
+              and g.requestedBy.id = :userId
+              and g.status in :statuses
+            """)
+    long countByRequesterAndStatuses(
+            @Param("userId") UUID userId,
+            @Param("statuses") List<GatePassStatus> statuses
     );
 }

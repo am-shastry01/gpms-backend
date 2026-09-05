@@ -44,6 +44,10 @@ services:
       SPRING_DATASOURCE_USERNAME: gpms
       SPRING_DATASOURCE_PASSWORD: gpms
       APP_JWT_SECRET: change-me-to-a-32-character-minimum-secret
+      # Set this to your PC's LAN IP (or an ngrok URL) so the link
+      # texted to a driver is reachable from their phone.
+      APP_PUBLIC_BASE_URL: ${APP_PUBLIC_BASE_URL:-http://192.168.1.5:8081}
+      APP_SMS_PROVIDER: ${APP_SMS_PROVIDER:-logging}
       APP_STORAGE_MINIO_ENDPOINT: http://minio:9000
       APP_STORAGE_MINIO_ACCESS_KEY: minioadmin
       APP_STORAGE_MINIO_SECRET_KEY: minioadmin
