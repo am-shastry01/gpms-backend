@@ -113,10 +113,29 @@ public class DatabaseUrlEnvironmentPostProcessor implements EnvironmentPostProce
 
             String database = uri.getPath() == null ? "" : uri.getPath();
 
-            String query = uri.getQuery() == null ? "" : "?" + uri.getQuery();
+            String query = uri.getQuery() == null ? "" : uri.getQuery();
+
+            /*
+             * Managed Postgres reached over the public internet -
+             * Neon, Supabase, Aiven - refuses non-TLS connections. A
+             * connection string pasted without sslmode fails with an
+             * error that says nothing about SSL, so it is added here
+             * when it is missing.
+             *
+             * A host with no dot in it is a platform-internal name
+             * (Render's "dpg-abc123-a", a docker-compose service
+             * name), which is already on a private network and where
+             * requiring TLS would break the connection instead.
+             */
+            boolean isExternalHost = host.contains(".");
+            boolean sslAlreadySpecified = query.contains("sslmode");
+
+            if (isExternalHost && !sslAlreadySpecified) {
+                query = query.isEmpty() ? "sslmode=require" : query + "&sslmode=require";
+            }
 
             String jdbcUrl = "jdbc:postgresql://" + host + ":" + port
-                    + database + query;
+                    + database + (query.isEmpty() ? "" : "?" + query);
 
             String username = null;
             String password = null;

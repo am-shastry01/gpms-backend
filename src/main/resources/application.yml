@@ -12,6 +12,30 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:gpms}
     password: ${SPRING_DATASOURCE_PASSWORD:gpms}
     driver-class-name: org.postgresql.Driver
+
+    hikari:
+      # Sized for a serverless Postgres (Neon, Supabase) that goes to
+      # sleep when idle and takes a few seconds to wake.
+      #
+      # connection-timeout allows for that wake-up rather than failing
+      # the first request after a quiet period.
+      connection-timeout: 30000
+
+      # Do not abort startup if the database is still waking. Boot
+      # retries instead of the container dying and Render marking the
+      # deploy failed.
+      initialization-fail-timeout: 60000
+
+      # Free tiers cap concurrent connections, and this runs on a
+      # single small instance - a large pool would exhaust the
+      # database's allowance for no benefit.
+      maximum-pool-size: 5
+      minimum-idle: 1
+
+      # Recycle before a serverless provider drops an idle connection
+      # underneath us.
+      idle-timeout: 120000
+      max-lifetime: 300000
   jpa:
     hibernate:
       ddl-auto: validate
