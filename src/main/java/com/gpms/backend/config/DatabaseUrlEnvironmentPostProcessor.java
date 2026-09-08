@@ -53,6 +53,35 @@ public class DatabaseUrlEnvironmentPostProcessor implements EnvironmentPostProce
         String databaseUrl = System.getenv("DATABASE_URL");
 
         if (databaseUrl == null || databaseUrl.isBlank()) {
+
+            /*
+             * Nothing configured, so application.yml's localhost
+             * default is about to be used. On a hosted platform there
+             * is no database in the web container, and the failure
+             * that follows - "Connection to localhost:5432 refused" -
+             * says nothing about the actual cause.
+             *
+             * Printed rather than logged because this runs before the
+             * logging system is initialised. It still reaches the
+             * platform's log stream, and its presence also confirms
+             * this processor is in the running build.
+             */
+            System.out.println(
+                    "\n============================================================\n"
+                            + " NO DATABASE CONFIGURED\n"
+                            + "------------------------------------------------------------\n"
+                            + " Neither DATABASE_URL nor SPRING_DATASOURCE_URL is set, so\n"
+                            + " the localhost default from application.yml will be used.\n"
+                            + "\n"
+                            + " That is correct for local development and docker-compose.\n"
+                            + " On a hosted platform it will fail, because there is no\n"
+                            + " database inside this container.\n"
+                            + "\n"
+                            + " Fix: add DATABASE_URL to this service's environment,\n"
+                            + " set to your managed database's INTERNAL connection string.\n"
+                            + "============================================================\n"
+            );
+
             return;
         }
 
@@ -60,6 +89,8 @@ public class DatabaseUrlEnvironmentPostProcessor implements EnvironmentPostProce
 
         /* Already a JDBC URL - nothing to translate. */
         if (databaseUrl.startsWith("jdbc:")) {
+            System.out.println(
+                    "[datasource] DATABASE_URL is already a JDBC URL; using it as is.");
             addProperties(environment, databaseUrl, null, null);
             return;
         }
@@ -103,6 +134,13 @@ public class DatabaseUrlEnvironmentPostProcessor implements EnvironmentPostProce
                     username = userInfo;
                 }
             }
+
+            /*
+             * Host and port only - never the credentials.
+             */
+            System.out.println(
+                    "[datasource] DATABASE_URL translated to jdbc:postgresql://"
+                            + host + ":" + port + database);
 
             addProperties(environment, jdbcUrl, username, password);
 
