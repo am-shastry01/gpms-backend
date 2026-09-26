@@ -68,14 +68,6 @@ public class BootstrapDataInitializer implements CommandLineRunner {
                 warehouse,
                 List.of(SystemRole.EMPLOYEE.name())
         );
-        ensureUser(
-                bootstrapProperties.getSecurityUsername(),
-                bootstrapProperties.getSecurityPassword(),
-                bootstrapProperties.getSecurityEmail(),
-                bootstrapProperties.getSecurityFullName(),
-                warehouse,
-                List.of(SystemRole.SECURITY.name())
-        );
     }
 
     private void ensureRoles() {

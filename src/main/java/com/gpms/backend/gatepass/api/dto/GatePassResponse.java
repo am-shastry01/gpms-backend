@@ -25,20 +25,34 @@ public record GatePassResponse(
         String packageDescription,
         String destination,
         LocalDate dispatchDate,
+        String transportName,
+        String invoiceNumber,
+        LocalDate invoiceDate,
         String remarks,
         String managerComments,
-        String qrContent,
         UUID requestedById,
         String requestedByName,
         UUID approvedById,
         String approvedByName,
         Instant approvalTime,
-        UUID exitedById,
-        String exitedByName,
-        Instant exitTime,
-        UUID enteredById,
-        String enteredByName,
-        Instant entryTime,
+
+        /*
+         * The three signature blocks on the printed pass.
+         *
+         * Whoever raised the pass has their own block filled the
+         * moment it exists; the other two fill in as and when those
+         * roles sign, on whatever date that happens.
+         */
+        UUID employeeApprovedById,
+        String employeeApprovedByName,
+        Instant employeeApprovedAt,
+        UUID managerApprovedById,
+        String managerApprovedByName,
+        Instant managerApprovedAt,
+        UUID adminApprovedById,
+        String adminApprovedByName,
+        Instant adminApprovedAt,
+
         List<GatePassItemResponse> items,
         List<ApprovalTrailResponse> approvals,
         List<AttachmentResponse> attachments,

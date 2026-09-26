@@ -27,6 +27,17 @@ public record GatePassCreateRequest(
         String destination,
         @NotNull(message = "Dispatch date is required")
         LocalDate dispatchDate,
+
+        /*
+         * Optional. A pass raised in a hurry at the gate may not
+         * have the invoice to hand, and refusing the pass over a
+         * missing invoice number would stop the truck rather than
+         * record it.
+         */
+        String transportName,
+        String invoiceNumber,
+        LocalDate invoiceDate,
+
         String remarks,
         @Valid
         List<GatePassItemRequest> items

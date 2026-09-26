@@ -6,11 +6,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class AppProperties {
 
     /**
-     * The address a driver's phone can reach this backend on.
+     * The address this backend is reachable on.
      *
-     * "localhost" is useless here: the link is opened on the driver's
-     * own handset, so it has to be the machine's LAN address (phone on
-     * the same WiFi) or a public tunnel such as ngrok.
+     * Used when a generated document or link has to name the server
+     * rather than assume it. No longer has anything to do with driver
+     * SMS links, which are gone along with the guard flow.
      */
     private String publicBaseUrl = "http://localhost:8081";
 

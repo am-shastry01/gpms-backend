@@ -9,7 +9,11 @@ public record DashboardMetricsResponse(
         UUID warehouseId,
         long pendingApprovals,
         long approvedToday,
-        long exitedToday,
+        /**
+         * Gate passes generated on the day. Was "exitedToday" when a
+         * guard recorded departures; nothing records those now.
+         */
+        long issuedToday,
         /**
          * Added so the admin dashboard can render its "rejected" and
          * "completed" tiles from one call. The app previously had to

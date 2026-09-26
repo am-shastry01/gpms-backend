@@ -23,7 +23,7 @@
         <jjwt.version>0.12.6</jjwt.version>
         <springdoc.version>2.6.0</springdoc.version>
         <minio.version>8.5.12</minio.version>
-        <zxing.version>3.5.3</zxing.version>
+        <openpdf.version>1.3.43</openpdf.version>
     </properties>
 
     <dependencies>
@@ -92,15 +92,18 @@
             <artifactId>minio</artifactId>
             <version>${minio.version}</version>
         </dependency>
+        <!--
+            PDF rendering for the gate pass document.
+
+            OpenPDF rather than PDFBox: PDFBox is a low-level content
+            stream API with no concept of a table or a flowing
+            paragraph, and this document is mostly tables. 1.3.43 is
+            the long-settled LGPL/MPL line.
+        -->
         <dependency>
-            <groupId>com.google.zxing</groupId>
-            <artifactId>core</artifactId>
-            <version>${zxing.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.google.zxing</groupId>
-            <artifactId>javase</artifactId>
-            <version>${zxing.version}</version>
+            <groupId>com.github.librepdf</groupId>
+            <artifactId>openpdf</artifactId>
+            <version>${openpdf.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

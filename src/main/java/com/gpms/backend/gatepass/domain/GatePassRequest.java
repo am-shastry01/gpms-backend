@@ -1,6 +1,7 @@
 package com.gpms.backend.gatepass.domain;
 
 import com.gpms.backend.common.domain.BaseEntity;
+import com.gpms.backend.signature.domain.DigitalSignature;
 import com.gpms.backend.driver.domain.Driver;
 import com.gpms.backend.user.domain.User;
 import com.gpms.backend.vendor.domain.Vendor;
@@ -35,17 +36,76 @@ public class GatePassRequest extends BaseEntity {
     @JoinColumn(name = "requested_by_user_id", nullable = false)
     private User requestedBy;
 
+    /**
+     * Whoever approved FIRST. Kept so the approval trail and the
+     * reports carry on working; the role-specific pairs below are
+     * what the signature blocks on the PDF are drawn from.
+     */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "approved_by_user_id")
     private User approvedBy;
 
+    /*
+     * Manager and admin approve independently, on their own dates.
+     *
+     * A pass created on the 1st and approved by a manager on the 6th
+     * carries the 6th against the manager's signature - the approval
+     * date is the date the action happened, never the date the pass
+     * was raised.
+     */
+    /*
+     * The employee block.
+     *
+     * On an employee-raised pass this is the requester, stamped at
+     * creation. On a manager- or admin-raised one it stays blank
+     * until an employee signs - the three blocks are three separate
+     * authorisations, not three descriptions of one.
+     */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "exited_by_user_id")
-    private User exitedBy;
+    @JoinColumn(name = "employee_approved_by_user_id")
+    private User employeeApprovedBy;
+
+    @Column(name = "employee_approved_at")
+    private Instant employeeApprovedAt;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "entered_by_user_id")
-    private User enteredBy;
+    @JoinColumn(name = "manager_approved_by_user_id")
+    private User managerApprovedBy;
+
+    @Column(name = "manager_approved_at")
+    private Instant managerApprovedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "admin_approved_by_user_id")
+    private User adminApprovedBy;
+
+    @Column(name = "admin_approved_at")
+    private Instant adminApprovedAt;
+
+    /*
+     * The exact signature VERSION applied at approval, not a pointer
+     * to "this person's signature".
+     *
+     * If a manager uploads a new signature next month, the pass they
+     * signed today still renders with the one they actually signed
+     * it with. Resolving the image through the user at render time
+     * would silently restyle every historical document.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "requester_signature_id")
+    private DigitalSignature requesterSignature;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "employee_signature_id")
+    private DigitalSignature employeeSignature;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "manager_signature_id")
+    private DigitalSignature managerSignature;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "admin_signature_id")
+    private DigitalSignature adminSignature;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "vendor_id", nullable = false)
@@ -75,6 +135,28 @@ public class GatePassRequest extends BaseEntity {
     @Column(name = "destination", nullable = false, length = 255)
     private String destination;
 
+    /*
+     * The transporter carrying the consignment.
+     *
+     * Free text rather than a link to the transport master: the
+     * master table exists, but passes are raised at a gate against
+     * whoever turned up, and a foreign key would mean refusing a
+     * pass because a carrier had not been set up yet.
+     */
+    @Column(name = "transport_name", length = 255)
+    private String transportName;
+
+    @Column(name = "invoice_number", length = 100)
+    private String invoiceNumber;
+
+    /*
+     * The date ON the invoice, which is often days before the truck
+     * leaves - so it is its own column rather than being inferred
+     * from the dispatch date.
+     */
+    @Column(name = "invoice_date")
+    private LocalDate invoiceDate;
+
     @Column(name = "remarks", length = 1000)
     private String remarks;
 
@@ -84,31 +166,10 @@ public class GatePassRequest extends BaseEntity {
     @Column(name = "approval_time")
     private Instant approvalTime;
 
-    @Column(name = "exit_time")
-    private Instant exitTime;
-
-    @Column(name = "entry_time")
-    private Instant entryTime;
-
     /*
      * Addresses the driver's public pass link. Not the primary key,
      * so it can expire, be revoked and be used once.
      */
-    @Column(name = "access_token", length = 64)
-    private String accessToken;
-
-    @Column(name = "token_issued_at")
-    private Instant tokenIssuedAt;
-
-    @Column(name = "token_expires_at")
-    private Instant tokenExpiresAt;
-
-    @Column(name = "token_consumed_at")
-    private Instant tokenConsumedAt;
-
-    @Column(name = "qr_content", length = 2000)
-    private String qrContent;
-
     public String getRequestNumber() {
         return requestNumber;
     }
@@ -149,20 +210,84 @@ public class GatePassRequest extends BaseEntity {
         this.approvedBy = approvedBy;
     }
 
-    public User getExitedBy() {
-        return exitedBy;
+    public User getEmployeeApprovedBy() {
+        return employeeApprovedBy;
     }
 
-    public void setExitedBy(User exitedBy) {
-        this.exitedBy = exitedBy;
+    public void setEmployeeApprovedBy(User employeeApprovedBy) {
+        this.employeeApprovedBy = employeeApprovedBy;
     }
 
-    public User getEnteredBy() {
-        return enteredBy;
+    public Instant getEmployeeApprovedAt() {
+        return employeeApprovedAt;
     }
 
-    public void setEnteredBy(User enteredBy) {
-        this.enteredBy = enteredBy;
+    public void setEmployeeApprovedAt(Instant employeeApprovedAt) {
+        this.employeeApprovedAt = employeeApprovedAt;
+    }
+
+    public DigitalSignature getEmployeeSignature() {
+        return employeeSignature;
+    }
+
+    public void setEmployeeSignature(DigitalSignature employeeSignature) {
+        this.employeeSignature = employeeSignature;
+    }
+
+    public User getManagerApprovedBy() {
+        return managerApprovedBy;
+    }
+
+    public void setManagerApprovedBy(User managerApprovedBy) {
+        this.managerApprovedBy = managerApprovedBy;
+    }
+
+    public Instant getManagerApprovedAt() {
+        return managerApprovedAt;
+    }
+
+    public void setManagerApprovedAt(Instant managerApprovedAt) {
+        this.managerApprovedAt = managerApprovedAt;
+    }
+
+    public User getAdminApprovedBy() {
+        return adminApprovedBy;
+    }
+
+    public void setAdminApprovedBy(User adminApprovedBy) {
+        this.adminApprovedBy = adminApprovedBy;
+    }
+
+    public Instant getAdminApprovedAt() {
+        return adminApprovedAt;
+    }
+
+    public void setAdminApprovedAt(Instant adminApprovedAt) {
+        this.adminApprovedAt = adminApprovedAt;
+    }
+
+    public DigitalSignature getRequesterSignature() {
+        return requesterSignature;
+    }
+
+    public void setRequesterSignature(DigitalSignature requesterSignature) {
+        this.requesterSignature = requesterSignature;
+    }
+
+    public DigitalSignature getManagerSignature() {
+        return managerSignature;
+    }
+
+    public void setManagerSignature(DigitalSignature managerSignature) {
+        this.managerSignature = managerSignature;
+    }
+
+    public DigitalSignature getAdminSignature() {
+        return adminSignature;
+    }
+
+    public void setAdminSignature(DigitalSignature adminSignature) {
+        this.adminSignature = adminSignature;
     }
 
     public Vendor getVendor() {
@@ -229,6 +354,30 @@ public class GatePassRequest extends BaseEntity {
         this.destination = destination;
     }
 
+    public String getTransportName() {
+        return transportName;
+    }
+
+    public void setTransportName(String transportName) {
+        this.transportName = transportName;
+    }
+
+    public String getInvoiceNumber() {
+        return invoiceNumber;
+    }
+
+    public void setInvoiceNumber(String invoiceNumber) {
+        this.invoiceNumber = invoiceNumber;
+    }
+
+    public LocalDate getInvoiceDate() {
+        return invoiceDate;
+    }
+
+    public void setInvoiceDate(LocalDate invoiceDate) {
+        this.invoiceDate = invoiceDate;
+    }
+
     public String getRemarks() {
         return remarks;
     }
@@ -253,59 +402,4 @@ public class GatePassRequest extends BaseEntity {
         this.approvalTime = approvalTime;
     }
 
-    public Instant getExitTime() {
-        return exitTime;
-    }
-
-    public void setExitTime(Instant exitTime) {
-        this.exitTime = exitTime;
-    }
-
-    public Instant getEntryTime() {
-        return entryTime;
-    }
-
-    public void setEntryTime(Instant entryTime) {
-        this.entryTime = entryTime;
-    }
-
-    public String getAccessToken() {
-        return accessToken;
-    }
-
-    public void setAccessToken(String accessToken) {
-        this.accessToken = accessToken;
-    }
-
-    public Instant getTokenIssuedAt() {
-        return tokenIssuedAt;
-    }
-
-    public void setTokenIssuedAt(Instant tokenIssuedAt) {
-        this.tokenIssuedAt = tokenIssuedAt;
-    }
-
-    public Instant getTokenExpiresAt() {
-        return tokenExpiresAt;
-    }
-
-    public void setTokenExpiresAt(Instant tokenExpiresAt) {
-        this.tokenExpiresAt = tokenExpiresAt;
-    }
-
-    public Instant getTokenConsumedAt() {
-        return tokenConsumedAt;
-    }
-
-    public void setTokenConsumedAt(Instant tokenConsumedAt) {
-        this.tokenConsumedAt = tokenConsumedAt;
-    }
-
-    public String getQrContent() {
-        return qrContent;
-    }
-
-    public void setQrContent(String qrContent) {
-        this.qrContent = qrContent;
-    }
 }

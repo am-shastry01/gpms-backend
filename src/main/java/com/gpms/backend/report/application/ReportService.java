@@ -5,16 +5,16 @@ import com.gpms.backend.gatepass.application.GatePassSpecifications;
 import com.gpms.backend.gatepass.domain.GatePassStatus;
 import com.gpms.backend.gatepass.infrastructure.GatePassRequestRepository;
 import com.gpms.backend.report.api.dto.DashboardMetricsResponse;
-import com.gpms.backend.report.api.dto.GateDashboardResponse;
 import com.gpms.backend.report.api.dto.MySummaryResponse;
 import com.gpms.backend.report.api.dto.VendorDispatchSummaryResponse;
 import com.gpms.backend.user.domain.Role;
 import com.gpms.backend.user.domain.User;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,12 +26,26 @@ public class ReportService {
     private final GatePassRequestRepository gatePassRequestRepository;
     private final CurrentUserService currentUserService;
 
+    /*
+     * The zone a working day is measured in.
+     *
+     * "Today" used to be a UTC day, while the app asks for the
+     * device's LOCAL date - so in India the day ran 05:30 to 05:30
+     * and a pass raised at 03:00 was counted against yesterday.
+     * The warehouse decides when its day starts, not the server's
+     * clock, so it is configurable and defaults to where the
+     * warehouse is.
+     */
+    private final ZoneId reportingZone;
+
     public ReportService(
             GatePassRequestRepository gatePassRequestRepository,
-            CurrentUserService currentUserService
+            CurrentUserService currentUserService,
+            @Value("${gpms.reporting.zone:Asia/Kolkata}") String reportingZone
     ) {
         this.gatePassRequestRepository = gatePassRequestRepository;
         this.currentUserService = currentUserService;
+        this.reportingZone = ZoneId.of(reportingZone);
     }
 
     /**
@@ -40,9 +54,15 @@ public class ReportService {
     public DashboardMetricsResponse dashboard(LocalDate date, UUID warehouseId) {
         User currentUser = currentUserService.requireCurrentUser();
         UUID effectiveWarehouseId = resolveWarehouseId(currentUser, warehouseId);
-        LocalDate effectiveDate = date == null ? LocalDate.now(ZoneOffset.UTC) : date;
-        Instant start = effectiveDate.atStartOfDay().toInstant(ZoneOffset.UTC);
-        Instant end = effectiveDate.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC);
+        LocalDate effectiveDate = date == null ? LocalDate.now(reportingZone) : date;
+
+        /*
+         * Midnight to midnight in the warehouse's own zone, then
+         * converted - so the window lines up with the date the app
+         * asked for instead of being shifted by the offset.
+         */
+        Instant start = effectiveDate.atStartOfDay(reportingZone).toInstant();
+        Instant end = effectiveDate.plusDays(1).atStartOfDay(reportingZone).toInstant();
 
         long pendingApprovals = gatePassRequestRepository.count(
                 Specification.where(GatePassSpecifications.notDeleted())
@@ -61,42 +81,12 @@ public class ReportService {
                 effectiveWarehouseId,
                 pendingApprovals,
                 gatePassRequestRepository.countApprovedBetween(start, end, effectiveWarehouseId),
-                gatePassRequestRepository.countExitedBetween(start, end, effectiveWarehouseId),
+                gatePassRequestRepository.countIssuedBetween(start, end, effectiveWarehouseId),
                 gatePassRequestRepository.countByStatusBetween(
                         GatePassStatus.REJECTED, start, end, effectiveWarehouseId),
                 gatePassRequestRepository.countByStatusBetween(
                         GatePassStatus.COMPLETED, start, end, effectiveWarehouseId),
                 vendorDispatches
-        );
-    }
-
-    /**
-     * Gate movement for the security guard's dashboard.
-     */
-    public GateDashboardResponse gateDashboard(LocalDate date) {
-        User currentUser = currentUserService.requireCurrentUser();
-        UUID effectiveWarehouseId = resolveWarehouseId(currentUser, null);
-        LocalDate effectiveDate = date == null ? LocalDate.now(ZoneOffset.UTC) : date;
-        Instant start = effectiveDate.atStartOfDay().toInstant(ZoneOffset.UTC);
-        Instant end = effectiveDate.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC);
-
-        long awaitingEntry = gatePassRequestRepository.countByStatusesAndWarehouse(
-                List.of(GatePassStatus.APPROVED, GatePassStatus.GATE_GENERATED),
-                effectiveWarehouseId
-        );
-
-        long insidePremises = gatePassRequestRepository.countByStatusesAndWarehouse(
-                List.of(GatePassStatus.ENTERED),
-                effectiveWarehouseId
-        );
-
-        return new GateDashboardResponse(
-                effectiveDate,
-                effectiveWarehouseId,
-                awaitingEntry,
-                insidePremises,
-                gatePassRequestRepository.countEnteredBetween(start, end, effectiveWarehouseId),
-                gatePassRequestRepository.countExitedBetween(start, end, effectiveWarehouseId)
         );
     }
 
@@ -113,12 +103,11 @@ public class ReportService {
                 gatePassRequestRepository.countByRequesterAndStatuses(
                         userId, List.of(GatePassStatus.DRAFT, GatePassStatus.PENDING)),
                 gatePassRequestRepository.countByRequesterAndStatuses(
-                        userId, List.of(GatePassStatus.APPROVED, GatePassStatus.GATE_GENERATED,
-                                GatePassStatus.ENTERED)),
+                        userId, List.of(GatePassStatus.APPROVED, GatePassStatus.GATE_GENERATED)),
                 gatePassRequestRepository.countByRequesterAndStatuses(
                         userId, List.of(GatePassStatus.REJECTED, GatePassStatus.CANCELLED)),
                 gatePassRequestRepository.countByRequesterAndStatuses(
-                        userId, List.of(GatePassStatus.EXITED, GatePassStatus.COMPLETED))
+                        userId, List.of(GatePassStatus.COMPLETED))
         );
     }
 

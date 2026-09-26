@@ -20,10 +20,6 @@ public class BootstrapProperties {
     private String employeePassword;
     private String employeeEmail;
     private String employeeFullName;
-    private String securityUsername;
-    private String securityPassword;
-    private String securityEmail;
-    private String securityFullName;
 
     public boolean isEnabled() {
         return enabled;
@@ -145,35 +141,4 @@ public class BootstrapProperties {
         this.employeeFullName = employeeFullName;
     }
 
-    public String getSecurityUsername() {
-        return securityUsername;
-    }
-
-    public void setSecurityUsername(String securityUsername) {
-        this.securityUsername = securityUsername;
-    }
-
-    public String getSecurityPassword() {
-        return securityPassword;
-    }
-
-    public void setSecurityPassword(String securityPassword) {
-        this.securityPassword = securityPassword;
-    }
-
-    public String getSecurityEmail() {
-        return securityEmail;
-    }
-
-    public void setSecurityEmail(String securityEmail) {
-        this.securityEmail = securityEmail;
-    }
-
-    public String getSecurityFullName() {
-        return securityFullName;
-    }
-
-    public void setSecurityFullName(String securityFullName) {
-        this.securityFullName = securityFullName;
-    }
 }

@@ -11,13 +11,10 @@ import com.gpms.backend.driver.infrastructure.DriverRepository;
 import com.gpms.backend.gatepass.api.dto.ApprovalActionRequest;
 import com.gpms.backend.gatepass.api.dto.ApprovalTrailResponse;
 import com.gpms.backend.gatepass.api.dto.AttachmentResponse;
-import com.gpms.backend.gatepass.api.dto.GateActionRequest;
 import com.gpms.backend.gatepass.api.dto.GatePassCreateRequest;
 import com.gpms.backend.gatepass.api.dto.GatePassItemRequest;
 import com.gpms.backend.gatepass.api.dto.GatePassItemResponse;
 import com.gpms.backend.gatepass.api.dto.GatePassResponse;
-import com.gpms.backend.gatepass.api.dto.PassVerificationResponse;
-import com.gpms.backend.gatepass.api.dto.PassVerificationResponse.VerificationOutcome;
 import com.gpms.backend.gatepass.domain.Approval;
 import com.gpms.backend.gatepass.domain.ApprovalAction;
 import com.gpms.backend.gatepass.domain.Attachment;
@@ -28,8 +25,8 @@ import com.gpms.backend.gatepass.infrastructure.ApprovalRepository;
 import com.gpms.backend.gatepass.infrastructure.AttachmentRepository;
 import com.gpms.backend.gatepass.infrastructure.GatePassItemRepository;
 import com.gpms.backend.gatepass.infrastructure.GatePassRequestRepository;
-import com.gpms.backend.driver.notification.DriverNotificationService;
 import com.gpms.backend.notification.application.NotificationService;
+import com.gpms.backend.signature.application.DigitalSignatureService;
 import com.gpms.backend.storage.application.ObjectStorageService;
 import com.gpms.backend.user.domain.Role;
 import com.gpms.backend.user.domain.User;
@@ -69,12 +66,11 @@ public class GatePassRequestService {
     private final UserRepository userRepository;
     private final CurrentUserService currentUserService;
     private final GatePassNumberGenerator gatePassNumberGenerator;
-    private final QrCodeService qrCodeService;
     private final NotificationService notificationService;
     private final AuditLogService auditLogService;
     private final ObjectStorageService objectStorageService;
-    private final GatePassTokenService gatePassTokenService;
-    private final DriverNotificationService driverNotificationService;
+    private final DigitalSignatureService digitalSignatureService;
+    private final GatePassPdfService gatePassPdfService;
 
     public GatePassRequestService(
             GatePassRequestRepository gatePassRequestRepository,
@@ -88,12 +84,11 @@ public class GatePassRequestService {
             UserRepository userRepository,
             CurrentUserService currentUserService,
             GatePassNumberGenerator gatePassNumberGenerator,
-            QrCodeService qrCodeService,
             NotificationService notificationService,
             AuditLogService auditLogService,
             ObjectStorageService objectStorageService,
-            GatePassTokenService gatePassTokenService,
-            DriverNotificationService driverNotificationService
+            DigitalSignatureService digitalSignatureService,
+            GatePassPdfService gatePassPdfService
     ) {
         this.gatePassRequestRepository = gatePassRequestRepository;
         this.gatePassItemRepository = gatePassItemRepository;
@@ -106,12 +101,11 @@ public class GatePassRequestService {
         this.userRepository = userRepository;
         this.currentUserService = currentUserService;
         this.gatePassNumberGenerator = gatePassNumberGenerator;
-        this.qrCodeService = qrCodeService;
         this.notificationService = notificationService;
         this.auditLogService = auditLogService;
         this.objectStorageService = objectStorageService;
-        this.gatePassTokenService = gatePassTokenService;
-        this.driverNotificationService = driverNotificationService;
+        this.digitalSignatureService = digitalSignatureService;
+        this.gatePassPdfService = gatePassPdfService;
     }
 
     public GatePassResponse create(GatePassCreateRequest request) {
@@ -129,12 +123,60 @@ public class GatePassRequestService {
         gatePassRequest.setVendor(vendor);
         gatePassRequest.setDriver(driver);
         gatePassRequest.setVehicle(vehicle);
+
+        /*
+         * The gate pass number is minted HERE, not on approval.
+         *
+         * Under the client's flow the pass is a document the
+         * requester walks away with immediately; approval is a
+         * signature added to it later. So every request that is
+         * raised is printable from the moment it is saved, whoever
+         * raised it.
+         *
+         * The status still says PENDING because the REQUEST is
+         * pending approval - that is what the approval queue reads.
+         * A pass with a number and a PENDING status is exactly the
+         * normal state of affairs now, not a half-finished one.
+         */
+        gatePassRequest.setGatePassNumber(gatePassNumberGenerator.nextGatePassNumber());
         gatePassRequest.setStatus(GatePassStatus.PENDING);
         gatePassRequest.setDispatchDate(request.dispatchDate());
         gatePassRequest.setPackageCount(request.packageCount());
         gatePassRequest.setPackageDescription(request.packageDescription().trim());
         gatePassRequest.setDestination(request.destination().trim());
+        gatePassRequest.setTransportName(trimToNull(request.transportName()));
+        gatePassRequest.setInvoiceNumber(trimToNull(request.invoiceNumber()));
+        gatePassRequest.setInvoiceDate(request.invoiceDate());
         gatePassRequest.setRemarks(request.remarks());
+
+        /*
+         * The requester's signature is snapshotted HERE, at creation.
+         *
+         * The pass is printed and carried away immediately, so the
+         * copy in someone's hand has to be signed for by whoever
+         * raised it. Snapshotting the version rather than pointing at
+         * the person means a later signature change cannot alter a
+         * document that has already been printed and filed.
+         */
+        digitalSignatureService.findCurrentFor(currentUser.getId())
+                .ifPresent(gatePassRequest::setRequesterSignature);
+
+        /*
+         * A pass needs a MANAGER signature and an ADMIN signature.
+         * Whoever raised it has already signed - so their own block
+         * is filled here, at creation, and only the other one is left
+         * outstanding.
+         *
+         *   employee raises -> manager AND admin still to sign
+         *   manager raises  -> admin only
+         *   admin raises    -> manager only
+         *
+         * Nobody is ever asked to counter-sign their own document,
+         * and an approver never has to "approve" something they
+         * authored just to clear it off their queue.
+         */
+        applyCreatorAuthorisation(gatePassRequest, currentUser);
+
         GatePassRequest saved = gatePassRequestRepository.save(gatePassRequest);
         saveItems(saved, request.items(), request.packageDescription(), request.packageCount());
 
@@ -147,6 +189,9 @@ public class GatePassRequestService {
                 "{\"requestNumber\":\"" + saved.getRequestNumber() + "\"}",
                 currentUser
         );
+
+        notifyPassRaised(saved);
+
         return toResponse(saved);
     }
 
@@ -171,6 +216,20 @@ public class GatePassRequestService {
             specification = specification.and(GatePassSpecifications.requestedByEquals(currentUser.getId()));
         }
         return gatePassRequestRepository.findAll(specification, pageable).map(this::toResponse);
+    }
+
+    /**
+     * The printable pass.
+     *
+     * Runs inside a read-only transaction so the lazy associations
+     * the document needs - vehicle, driver, transport, both
+     * approvers and their signature images - can still be loaded
+     * while it renders. Outside one this would fail on the first
+     * association the PDF touched.
+     */
+    @Transactional(readOnly = true)
+    public byte[] renderPdf(UUID requestId) {
+        return gatePassPdfService.render(findAccessibleRequest(requestId));
     }
 
     public GatePassResponse getById(UUID id) {
@@ -207,59 +266,164 @@ public class GatePassRequestService {
         );
     }
 
-    public byte[] getQrPng(UUID requestId) {
-        GatePassRequest gatePassRequest = findAccessibleRequest(requestId);
-        if (gatePassRequest.getQrContent() == null || gatePassRequest.getQrContent().isBlank()) {
-            throw new BusinessException("QR code is not available for this gate pass");
+    /**
+     * Applies one approver's signature to a pass that already exists.
+     *
+     * A manager and an admin approve independently: either may go
+     * first, neither waits for the other, and each is stamped with
+     * the date THEY acted on. A pass raised on the 1st and approved
+     * by a manager on the 6th carries the 6th in the manager's
+     * block - the five day gap changes nothing else about it.
+     *
+     * Nothing but the approval fields is written here. The vehicle,
+     * driver, destination, consignment lines and requester are the
+     * values captured at creation and they stay that way; approving
+     * late must never rewrite the pass.
+     */
+    /**
+     * Everything still waiting on the signed-in approver's own
+     * signature.
+     *
+     * An admin sees passes with an empty admin block, a manager sees
+     * passes with an empty manager block. The two queues are
+     * independent, so a pass the manager has already signed stays in
+     * the admin's list until the admin signs it too - which is the
+     * point, since both signatures are wanted for audit and they can
+     * arrive days apart.
+     */
+    @Transactional(readOnly = true)
+    public List<GatePassResponse> awaitingMySignature() {
+
+        User currentUser = currentUserService.requireCurrentUser();
+
+        UUID warehouseId = effectiveWarehouseId(currentUser, null);
+
+        List<GatePassStatus> excluded =
+                List.of(GatePassStatus.REJECTED, GatePassStatus.CANCELLED);
+
+        /*
+         * Whichever block is mine, and still blank. An admin who is
+         * also a manager is asked for the admin signature first,
+         * because that is the one that closes the document.
+         */
+        List<GatePassRequest> pending;
+
+        if (hasRole(currentUser, "ADMIN")) {
+            pending = gatePassRequestRepository
+                    .findAwaitingAdminSignature(excluded, warehouseId);
+        } else if (hasRole(currentUser, "MANAGER")) {
+            pending = gatePassRequestRepository
+                    .findAwaitingManagerSignature(excluded, warehouseId);
+        } else {
+            pending = gatePassRequestRepository
+                    .findAwaitingEmployeeSignature(excluded, warehouseId);
         }
-        return qrCodeService.generatePng(gatePassRequest.getQrContent());
+
+        return pending.stream().map(this::toResponse).toList();
     }
 
     public GatePassResponse approve(UUID requestId, ApprovalActionRequest request) {
         User currentUser = currentUserService.requireCurrentUser();
-        ensureManagerOrAdmin(currentUser);
         GatePassRequest gatePassRequest = findAccessibleRequest(requestId);
-        if (gatePassRequest.getStatus() != GatePassStatus.PENDING) {
-            throw new BusinessException("Only pending requests can be approved");
+
+        if (gatePassRequest.getStatus() == GatePassStatus.REJECTED
+                || gatePassRequest.getStatus() == GatePassStatus.CANCELLED) {
+            throw new BusinessException("A rejected or cancelled gate pass cannot be approved");
         }
 
-        gatePassRequest.setApprovedBy(currentUser);
-        gatePassRequest.setApprovalTime(Instant.now());
-        gatePassRequest.setManagerComments(request.comments());
-        gatePassRequest.setGatePassNumber(gatePassNumberGenerator.nextGatePassNumber());
-        gatePassRequest.setStatus(GatePassStatus.GATE_GENERATED);
-        gatePassRequest.setQrContent(qrCodeService.buildQrContent(gatePassRequest));
+        String previousStatus = gatePassRequest.getStatus().name();
+        Instant actionTime = Instant.now();
+
+        /*
+         * One signature per role, and you sign your own block.
+         *
+         * Signing twice in the same role would overwrite a date that
+         * has already been printed, so it is refused rather than
+         * silently re-stamped.
+         */
+        if (hasRole(currentUser, "ADMIN")) {
+
+            if (gatePassRequest.getAdminApprovedAt() != null) {
+                throw new ConflictException("This gate pass has already been signed by an admin");
+            }
+            gatePassRequest.setAdminApprovedBy(currentUser);
+            gatePassRequest.setAdminApprovedAt(actionTime);
+            digitalSignatureService.findCurrentFor(currentUser.getId())
+                    .ifPresent(gatePassRequest::setAdminSignature);
+
+        } else if (hasRole(currentUser, "MANAGER")) {
+
+            if (gatePassRequest.getManagerApprovedAt() != null) {
+                throw new ConflictException("This gate pass has already been signed by a manager");
+            }
+            gatePassRequest.setManagerApprovedBy(currentUser);
+            gatePassRequest.setManagerApprovedAt(actionTime);
+            digitalSignatureService.findCurrentFor(currentUser.getId())
+                    .ifPresent(gatePassRequest::setManagerSignature);
+
+            /*
+             * managerComments is the manager's field by name and by
+             * meaning, so nobody else's note overwrites what a
+             * manager wrote. Every approver's note is preserved in
+             * the approval trail regardless.
+             */
+            gatePassRequest.setManagerComments(request == null ? null : request.comments());
+
+        } else {
+
+            if (gatePassRequest.getEmployeeApprovedAt() != null) {
+                throw new ConflictException("This gate pass has already been signed by an employee");
+            }
+            gatePassRequest.setEmployeeApprovedBy(currentUser);
+            gatePassRequest.setEmployeeApprovedAt(actionTime);
+            digitalSignatureService.findCurrentFor(currentUser.getId())
+                    .ifPresent(gatePassRequest::setEmployeeSignature);
+        }
+
+        /*
+         * APPROVED means all three blocks are filled - nothing less.
+         *
+         * It used to be set on the FIRST signature, which made a pass
+         * with two blanks on it read as approved everywhere it was
+         * counted. A pass with a signature still outstanding stays
+         * PENDING, which is also what keeps it rejectable.
+         */
+        boolean fullySigned = isFullySigned(gatePassRequest);
+
+        if (fullySigned) {
+
+            /*
+             * The legacy single-approver pair records whoever closed
+             * the document, which is what the older reports and the
+             * approval trail are built on.
+             */
+            if (gatePassRequest.getApprovalTime() == null) {
+                gatePassRequest.setApprovedBy(currentUser);
+                gatePassRequest.setApprovalTime(actionTime);
+            }
+
+            gatePassRequest.setStatus(GatePassStatus.APPROVED);
+        }
 
         Approval approval = new Approval();
         approval.setGatePassRequest(gatePassRequest);
         approval.setManager(currentUser);
         approval.setAction(ApprovalAction.APPROVED);
-        approval.setComments(request.comments());
-        approval.setActionTime(Instant.now());
+        approval.setComments(request == null ? null : request.comments());
+        approval.setActionTime(actionTime);
         approvalRepository.save(approval);
 
-        /*
-         * The driver has no account, so the pass reaches them as a
-         * link addressed by a one-time token. Issued here, before the
-         * save, so the token is persisted with the approval.
-         */
-        String driverToken = gatePassTokenService.issue(gatePassRequest);
-
         GatePassRequest saved = gatePassRequestRepository.save(gatePassRequest);
-        notifyApproval(saved);
 
-        /*
-         * Texting must never undo an approval that has already been
-         * decided, so this records its own failures rather than
-         * throwing.
-         */
-        driverNotificationService.sendGatePass(saved, driverToken);
+        if (fullySigned) {
+            notifyApproval(saved);
+        }
 
         auditLogService.record(
                 "GatePassRequest",
                 saved.getId().toString(),
-                "APPROVED",
-                "PENDING",
+                fullySigned ? "APPROVED" : "SIGNED",
+                previousStatus,
                 saved.getStatus().name(),
                 "{\"gatePassNumber\":\"" + saved.getGatePassNumber() + "\"}",
                 currentUser
@@ -310,92 +474,6 @@ public class GatePassRequestService {
         return toResponse(saved);
     }
 
-    public GatePassResponse markExit(UUID requestId, GateActionRequest request) {
-        User currentUser = currentUserService.requireCurrentUser();
-        ensureSecurityOrAdmin(currentUser);
-        GatePassRequest gatePassRequest = findAccessibleRequest(requestId);
-        if (gatePassRequest.getStatus() != GatePassStatus.GATE_GENERATED
-                && gatePassRequest.getStatus() != GatePassStatus.APPROVED
-                && gatePassRequest.getStatus() != GatePassStatus.ENTERED) {
-            throw new BusinessException("Only approved gate passes can be marked as exited");
-        }
-        gatePassRequest.setExitedBy(currentUser);
-        gatePassRequest.setExitTime(Instant.now());
-        gatePassRequest.setStatus(GatePassStatus.EXITED);
-        appendRemark(gatePassRequest, "Exit", request == null ? null : request.remarks());
-        GatePassRequest saved = gatePassRequestRepository.save(gatePassRequest);
-
-        List<User> recipients = new ArrayList<>();
-        recipients.add(saved.getRequestedBy());
-        recipients.addAll(userRepository.findActiveByRoleAndWarehouse("MANAGER", saved.getWarehouse().getId()));
-        recipients.addAll(userRepository.findActiveByRoleAndWarehouse("ADMIN", saved.getWarehouse().getId()));
-        notificationService.notifyUsers(
-                recipients,
-                saved,
-                "Truck exited",
-                "Gate pass " + saved.getGatePassNumber() + " exited at " + saved.getExitTime()
-        );
-        auditLogService.record(
-                "GatePassRequest",
-                saved.getId().toString(),
-                "EXITED",
-                "GATE_GENERATED",
-                saved.getStatus().name(),
-                null,
-                currentUser
-        );
-        return toResponse(saved);
-    }
-
-    /**
-     * Records a truck arriving at the gate.
-     *
-     * The mirror of markExit. Previously the guard app had an "Allow
-     * Entry" button with nothing behind it, because neither the
-     * endpoint nor the ENTERED status existed.
-     */
-    public GatePassResponse markEntry(UUID requestId, GateActionRequest request) {
-        User currentUser = currentUserService.requireCurrentUser();
-        ensureSecurityOrAdmin(currentUser);
-        GatePassRequest gatePassRequest = findAccessibleRequest(requestId);
-
-        if (gatePassRequest.getStatus() != GatePassStatus.GATE_GENERATED
-                && gatePassRequest.getStatus() != GatePassStatus.APPROVED) {
-            throw new BusinessException("Only approved gate passes can be checked in at the gate");
-        }
-        if (gatePassRequest.getEntryTime() != null) {
-            throw new ConflictException("This gate pass has already been checked in");
-        }
-
-        String previousStatus = gatePassRequest.getStatus().name();
-        gatePassRequest.setEnteredBy(currentUser);
-        gatePassRequest.setEntryTime(Instant.now());
-        gatePassRequest.setStatus(GatePassStatus.ENTERED);
-        appendRemark(gatePassRequest, "Entry", request == null ? null : request.remarks());
-
-        GatePassRequest saved = gatePassRequestRepository.save(gatePassRequest);
-
-        List<User> recipients = new ArrayList<>();
-        recipients.add(saved.getRequestedBy());
-        recipients.addAll(userRepository.findActiveByRoleAndWarehouse("MANAGER", saved.getWarehouse().getId()));
-        notificationService.notifyUsers(
-                recipients,
-                saved,
-                "Truck arrived at gate",
-                "Gate pass " + saved.getGatePassNumber() + " checked in at " + saved.getEntryTime()
-        );
-        auditLogService.record(
-                "GatePassRequest",
-                saved.getId().toString(),
-                "ENTERED",
-                previousStatus,
-                saved.getStatus().name(),
-                null,
-                currentUser
-        );
-        return toResponse(saved);
-    }
-
     /**
      * Looks a gate pass up by its human-readable number.
      *
@@ -424,7 +502,7 @@ public class GatePassRequestService {
      * Lets the requester withdraw a request that has not been decided
      * on yet. There was previously no way to undo a submission at all.
      */
-    public GatePassResponse cancel(UUID requestId, GateActionRequest request) {
+    public GatePassResponse cancel(UUID requestId, String remarks) {
         User currentUser = currentUserService.requireCurrentUser();
         GatePassRequest gatePassRequest = findAccessibleRequest(requestId);
 
@@ -439,7 +517,7 @@ public class GatePassRequestService {
 
         String previousStatus = gatePassRequest.getStatus().name();
         gatePassRequest.setStatus(GatePassStatus.CANCELLED);
-        appendRemark(gatePassRequest, "Cancelled", request == null ? null : request.remarks());
+        appendRemark(gatePassRequest, "Cancelled", remarks);
 
         GatePassRequest saved = gatePassRequestRepository.save(gatePassRequest);
         auditLogService.record(
@@ -465,132 +543,117 @@ public class GatePassRequestService {
     }
 
     /**
-     * Checks a code scanned off a driver's phone at the gate.
+     * Tells the approvers a pass has been raised.
      *
-     * Returns a verdict for every case rather than throwing, so the
-     * guard sees "already used" or "expired" instead of a generic
-     * error they cannot act on.
+     * The pass is already issued and printable at this point, so
+     * this is not "please authorise before anything can happen" - it
+     * is "this went out, sign it off when you get to it". Managers
+     * and admins both get it; the requester does not need telling
+     * about their own pass.
      */
-    public PassVerificationResponse verifyScannedPass(
-            String token,
-            boolean consume
-    ) {
+    /**
+     * Fills the creator's own authorisation block when they are one
+     * of the two approvers.
+     *
+     * Dated at creation because that IS when they authorised it -
+     * they raised the document. The status only reaches APPROVED if
+     * this leaves nothing outstanding, which happens when a user
+     * holds both roles.
+     */
+    /*
+     * The creator signs their own block, and only their own.
+     *
+     * Three roles sign a gate pass and any of the three can raise
+     * one. Whoever raises it has, by raising it, authorised it in
+     * their own capacity - so that block is stamped immediately and
+     * the other two are left blank for the people who hold them.
+     */
+    private void applyCreatorAuthorisation(GatePassRequest gatePassRequest, User currentUser) {
 
-        User currentUser = currentUserService.requireCurrentUser();
-        ensureSecurityOrAdmin(currentUser);
+        Instant now = Instant.now();
 
-        GatePassRequest gatePassRequest = gatePassRequestRepository
-                .findByAccessTokenAndDeletedFalse(token == null ? "" : token.trim())
-                .orElse(null);
-
-        if (gatePassRequest == null) {
-            return PassVerificationResponse.of(
-                    VerificationOutcome.NOT_FOUND,
-                    "This code does not match any gate pass.",
-                    null
-            );
+        if (hasRole(currentUser, "EMPLOYEE")) {
+            gatePassRequest.setEmployeeApprovedBy(currentUser);
+            gatePassRequest.setEmployeeApprovedAt(now);
+            digitalSignatureService.findCurrentFor(currentUser.getId())
+                    .ifPresent(gatePassRequest::setEmployeeSignature);
         }
 
-        /*
-         * A guard may only admit trucks to their own warehouse. An
-         * admin is not pinned to one.
-         */
-        if (!hasRole(currentUser, "ADMIN")) {
-
-            UUID ownWarehouseId = currentUser.getWarehouse() == null
-                    ? null
-                    : currentUser.getWarehouse().getId();
-
-            if (ownWarehouseId == null
-                    || !gatePassRequest.getWarehouse().getId().equals(ownWarehouseId)) {
-
-                return PassVerificationResponse.of(
-                        VerificationOutcome.WRONG_WAREHOUSE,
-                        "This pass is for a different warehouse.",
-                        null
-                );
-            }
+        if (hasRole(currentUser, "ADMIN")) {
+            gatePassRequest.setAdminApprovedBy(currentUser);
+            gatePassRequest.setAdminApprovedAt(now);
+            digitalSignatureService.findCurrentFor(currentUser.getId())
+                    .ifPresent(gatePassRequest::setAdminSignature);
         }
 
-        GatePassStatus status = gatePassRequest.getStatus();
-
-        if (status == GatePassStatus.EXITED || status == GatePassStatus.COMPLETED) {
-            return PassVerificationResponse.of(
-                    VerificationOutcome.ALREADY_EXITED,
-                    "This truck has already left on this pass.",
-                    toResponse(gatePassRequest)
-            );
+        if (hasRole(currentUser, "MANAGER")) {
+            gatePassRequest.setManagerApprovedBy(currentUser);
+            gatePassRequest.setManagerApprovedAt(now);
+            digitalSignatureService.findCurrentFor(currentUser.getId())
+                    .ifPresent(gatePassRequest::setManagerSignature);
         }
 
-        if (status != GatePassStatus.APPROVED
-                && status != GatePassStatus.GATE_GENERATED
-                && status != GatePassStatus.ENTERED) {
+        boolean fullySigned = isFullySigned(gatePassRequest);
 
-            return PassVerificationResponse.of(
-                    VerificationOutcome.NOT_APPROVED,
-                    "This pass is " + status.name().toLowerCase()
-                            + " and cannot be used at the gate.",
-                    toResponse(gatePassRequest)
-            );
+        if (fullySigned) {
+            gatePassRequest.setApprovedBy(currentUser);
+            gatePassRequest.setApprovalTime(now);
+            gatePassRequest.setStatus(GatePassStatus.APPROVED);
         }
-
-        if (gatePassTokenService.isExpired(gatePassRequest)) {
-            return PassVerificationResponse.of(
-                    VerificationOutcome.EXPIRED,
-                    "This pass link has expired. Ask for a new one.",
-                    toResponse(gatePassRequest)
-            );
-        }
-
-        /*
-         * A consumed token still verifies for a truck already inside -
-         * the guard needs to scan it again on the way out.
-         */
-        if (gatePassTokenService.isConsumed(gatePassRequest)
-                && status != GatePassStatus.ENTERED) {
-
-            return PassVerificationResponse.of(
-                    VerificationOutcome.ALREADY_USED,
-                    "This QR code has already been used at the gate.",
-                    toResponse(gatePassRequest)
-            );
-        }
-
-        if (consume && !gatePassTokenService.isConsumed(gatePassRequest)) {
-            gatePassTokenService.markConsumed(gatePassRequest);
-            gatePassRequestRepository.save(gatePassRequest);
-        }
-
-        return PassVerificationResponse.of(
-                VerificationOutcome.VALID,
-                "Approved. The truck may proceed.",
-                toResponse(gatePassRequest)
-        );
     }
 
     /**
-     * The driver's own view of their pass, reached from the SMS link
-     * with no login. Returns null when the token is unusable so the
-     * controller can render a plain "not valid" page.
+     * All three blocks filled. Nothing else counts as approved.
      */
-    @Transactional(readOnly = true)
-    public GatePassRequest findByAccessTokenForPublicPage(String token) {
+    private boolean isFullySigned(GatePassRequest gatePassRequest) {
 
-        GatePassRequest gatePassRequest = gatePassRequestRepository
-                .findByAccessTokenAndDeletedFalse(token == null ? "" : token.trim())
-                .orElse(null);
+        return gatePassRequest.getEmployeeApprovedAt() != null
+                && gatePassRequest.getManagerApprovedAt() != null
+                && gatePassRequest.getAdminApprovedAt() != null;
+    }
 
-        if (gatePassRequest == null || gatePassTokenService.isExpired(gatePassRequest)) {
-            return null;
+    private void notifyPassRaised(GatePassRequest gatePassRequest) {
+
+        UUID warehouseId = gatePassRequest.getWarehouse().getId();
+
+        /*
+         * Only the roles that still owe a signature are told. A pass
+         * raised by a manager is already manager-signed, so telling
+         * every manager it is "awaiting your authorisation" would be
+         * false - and would fill their queue with work that is not
+         * theirs.
+         */
+        List<User> recipients = new ArrayList<>();
+
+        if (gatePassRequest.getEmployeeApprovedAt() == null) {
+            recipients.addAll(userRepository.findActiveByRoleAndWarehouse("EMPLOYEE", warehouseId));
+        }
+        if (gatePassRequest.getManagerApprovedAt() == null) {
+            recipients.addAll(userRepository.findActiveByRoleAndWarehouse("MANAGER", warehouseId));
+        }
+        if (gatePassRequest.getAdminApprovedAt() == null) {
+            recipients.addAll(userRepository.findActiveByRoleAndWarehouse("ADMIN", warehouseId));
         }
 
-        return gatePassRequest;
+        recipients.removeIf(user -> user.getId().equals(gatePassRequest.getRequestedBy().getId()));
+
+        if (recipients.isEmpty()) {
+            return;
+        }
+
+        String message = "Gate Pass " + gatePassRequest.getGatePassNumber()
+                + " raised by " + gatePassRequest.getRequestedBy().getFullName()
+                + " for truck " + gatePassRequest.getVehicle().getRegistrationNumber()
+                + ". Awaiting your authorisation.";
+
+        notificationService.notifyUsers(
+                recipients, gatePassRequest, "Gate pass awaiting authorisation", message);
     }
 
     private void notifyApproval(GatePassRequest gatePassRequest) {
         List<User> recipients = new ArrayList<>();
         recipients.add(gatePassRequest.getRequestedBy());
-        recipients.addAll(userRepository.findActiveByRoleAndWarehouse("SECURITY", gatePassRequest.getWarehouse().getId()));
+        recipients.addAll(userRepository.findActiveByRoleAndWarehouse("MANAGER", gatePassRequest.getWarehouse().getId()));
         recipients.addAll(userRepository.findActiveByRoleAndWarehouse("ADMIN", gatePassRequest.getWarehouse().getId()));
         String message = "Gate Pass " + gatePassRequest.getGatePassNumber()
                 + " approved for truck " + gatePassRequest.getVehicle().getRegistrationNumber()
@@ -725,12 +788,6 @@ public class GatePassRequestService {
         }
     }
 
-    private void ensureSecurityOrAdmin(User user) {
-        if (!hasRole(user, "SECURITY") && !hasRole(user, "ADMIN")) {
-            throw new UnauthorizedOperationException("Security or admin role required");
-        }
-    }
-
     private boolean isEmployee(User user) {
         return hasRole(user, "EMPLOYEE");
     }
@@ -744,6 +801,22 @@ public class GatePassRequestService {
             return "attachment";
         }
         return fileName.replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
+
+    /*
+     * Blank and absent mean the same thing for these, and storing
+     * an empty string would make "not recorded" indistinguishable
+     * from "recorded as nothing".
+     */
+    private String trimToNull(String value) {
+
+        if (value == null) {
+            return null;
+        }
+
+        String trimmed = value.trim();
+
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private GatePassResponse toResponse(GatePassRequest gatePassRequest) {
@@ -804,20 +877,31 @@ public class GatePassRequestService {
                 gatePassRequest.getPackageDescription(),
                 gatePassRequest.getDestination(),
                 gatePassRequest.getDispatchDate(),
+                gatePassRequest.getTransportName(),
+                gatePassRequest.getInvoiceNumber(),
+                gatePassRequest.getInvoiceDate(),
                 gatePassRequest.getRemarks(),
                 gatePassRequest.getManagerComments(),
-                gatePassRequest.getQrContent(),
                 gatePassRequest.getRequestedBy().getId(),
                 gatePassRequest.getRequestedBy().getFullName(),
                 gatePassRequest.getApprovedBy() != null ? gatePassRequest.getApprovedBy().getId() : null,
                 gatePassRequest.getApprovedBy() != null ? gatePassRequest.getApprovedBy().getFullName() : null,
                 gatePassRequest.getApprovalTime(),
-                gatePassRequest.getExitedBy() != null ? gatePassRequest.getExitedBy().getId() : null,
-                gatePassRequest.getExitedBy() != null ? gatePassRequest.getExitedBy().getFullName() : null,
-                gatePassRequest.getExitTime(),
-                gatePassRequest.getEnteredBy() != null ? gatePassRequest.getEnteredBy().getId() : null,
-                gatePassRequest.getEnteredBy() != null ? gatePassRequest.getEnteredBy().getFullName() : null,
-                gatePassRequest.getEntryTime(),
+                gatePassRequest.getEmployeeApprovedBy() != null
+                        ? gatePassRequest.getEmployeeApprovedBy().getId() : null,
+                gatePassRequest.getEmployeeApprovedBy() != null
+                        ? gatePassRequest.getEmployeeApprovedBy().getFullName() : null,
+                gatePassRequest.getEmployeeApprovedAt(),
+                gatePassRequest.getManagerApprovedBy() != null
+                        ? gatePassRequest.getManagerApprovedBy().getId() : null,
+                gatePassRequest.getManagerApprovedBy() != null
+                        ? gatePassRequest.getManagerApprovedBy().getFullName() : null,
+                gatePassRequest.getManagerApprovedAt(),
+                gatePassRequest.getAdminApprovedBy() != null
+                        ? gatePassRequest.getAdminApprovedBy().getId() : null,
+                gatePassRequest.getAdminApprovedBy() != null
+                        ? gatePassRequest.getAdminApprovedBy().getFullName() : null,
+                gatePassRequest.getAdminApprovedAt(),
                 items,
                 approvals,
                 attachments,

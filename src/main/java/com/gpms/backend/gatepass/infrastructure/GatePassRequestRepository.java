@@ -21,7 +21,6 @@ public interface GatePassRequestRepository
 
     Optional<GatePassRequest> findByGatePassNumberIgnoreCaseAndDeletedFalse(String gatePassNumber);
 
-    Optional<GatePassRequest> findByAccessTokenAndDeletedFalse(String accessToken);
 
     Page<GatePassRequest> findAllByRequestedByIdAndDeletedFalse(UUID requestedById, Pageable pageable);
 
@@ -36,14 +35,23 @@ public interface GatePassRequestRepository
             """)
     long countApprovedBetween(@Param("start") Instant start, @Param("end") Instant end, @Param("warehouseId") UUID warehouseId);
 
+    /**
+     * Gate passes actually issued in the window.
+     *
+     * This replaces the old "exited" count, which was driven by a
+     * timestamp only the security guard could write. With no guard
+     * in the flow, the honest measure of a day's dispatch activity
+     * is how many passes were generated.
+     */
     @Query("""
             select count(g) from GatePassRequest g
             where g.deleted = false
-              and g.exitTime >= :start
-              and g.exitTime < :end
+              and g.gatePassNumber is not null
+              and g.createdAt >= :start
+              and g.createdAt < :end
               and (:warehouseId is null or g.warehouse.id = :warehouseId)
             """)
-    long countExitedBetween(@Param("start") Instant start, @Param("end") Instant end, @Param("warehouseId") UUID warehouseId);
+    long countIssuedBetween(@Param("start") Instant start, @Param("end") Instant end, @Param("warehouseId") UUID warehouseId);
 
     @Query("""
             select v.name, count(g)
@@ -79,24 +87,63 @@ public interface GatePassRequestRepository
     @Query("""
             select count(g) from GatePassRequest g
             where g.deleted = false
-              and g.entryTime >= :start
-              and g.entryTime < :end
-              and (:warehouseId is null or g.warehouse.id = :warehouseId)
-            """)
-    long countEnteredBetween(
-            @Param("start") Instant start,
-            @Param("end") Instant end,
-            @Param("warehouseId") UUID warehouseId
-    );
-
-    @Query("""
-            select count(g) from GatePassRequest g
-            where g.deleted = false
               and g.status in :statuses
               and (:warehouseId is null or g.warehouse.id = :warehouseId)
             """)
     long countByStatusesAndWarehouse(
             @Param("statuses") List<GatePassStatus> statuses,
+            @Param("warehouseId") UUID warehouseId
+    );
+
+    /*
+     * The two authorisation queues.
+     *
+     * Deliberately keyed on "has MY role signed yet", not on status.
+     * A pass is APPROVED the moment either approver signs, so a
+     * status-based queue would drop it the instant the manager
+     * signed and leave the admin with no way to find it - even
+     * though their own signature block is still blank and the
+     * document is waiting on them for audit.
+     *
+     * Rejected and cancelled passes are excluded: there is nothing
+     * left to authorise on a pass that went nowhere.
+     */
+    @Query("""
+            select g from GatePassRequest g
+            where g.deleted = false
+              and g.status not in :excluded
+              and g.employeeApprovedAt is null
+              and (:warehouseId is null or g.warehouse.id = :warehouseId)
+            order by g.createdAt desc
+            """)
+    List<GatePassRequest> findAwaitingEmployeeSignature(
+            @Param("excluded") List<GatePassStatus> excluded,
+            @Param("warehouseId") UUID warehouseId
+    );
+
+    @Query("""
+            select g from GatePassRequest g
+            where g.deleted = false
+              and g.status not in :excluded
+              and g.managerApprovedAt is null
+              and (:warehouseId is null or g.warehouse.id = :warehouseId)
+            order by g.createdAt desc
+            """)
+    List<GatePassRequest> findAwaitingManagerSignature(
+            @Param("excluded") List<GatePassStatus> excluded,
+            @Param("warehouseId") UUID warehouseId
+    );
+
+    @Query("""
+            select g from GatePassRequest g
+            where g.deleted = false
+              and g.status not in :excluded
+              and g.adminApprovedAt is null
+              and (:warehouseId is null or g.warehouse.id = :warehouseId)
+            order by g.createdAt desc
+            """)
+    List<GatePassRequest> findAwaitingAdminSignature(
+            @Param("excluded") List<GatePassStatus> excluded,
             @Param("warehouseId") UUID warehouseId
     );
 

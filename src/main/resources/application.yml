@@ -67,33 +67,10 @@ springdoc:
 
 app:
   # ---------------------------------------------------------------
-  # The address a DRIVER'S PHONE can reach this backend on.
-  #
-  # This goes into the SMS link, so "localhost" is useless - that
-  # would resolve to the driver's own handset. Use either:
-  #   * your PC's LAN IP, for a phone on the same WiFi
-  #       http://192.168.1.5:8081
-  #   * an ngrok / tunnel URL, to test from any network
-  #       https://<subdomain>.ngrok-free.app
+  # The address this backend is publicly reachable on. Used wherever
+  # a generated document or link has to name the server.
   # ---------------------------------------------------------------
-  public-base-url: ${APP_PUBLIC_BASE_URL:http://192.168.1.5:8081}
-
-  sms:
-    # Turn all driver SMS off without touching anything else.
-    enabled: ${APP_SMS_ENABLED:true}
-
-    # "logging" writes the message and link to the backend console
-    # instead of sending it - no account, no cost, whole flow still
-    # testable. Switch to "twilio" once you have credentials.
-    provider: ${APP_SMS_PROVIDER:logging}
-
-    # How long a driver's pass link stays usable.
-    link-ttl-hours: ${APP_SMS_LINK_TTL_HOURS:72}
-
-    twilio:
-      account-sid: ${APP_SMS_TWILIO_ACCOUNT_SID:}
-      auth-token: ${APP_SMS_TWILIO_AUTH_TOKEN:}
-      from-number: ${APP_SMS_TWILIO_FROM_NUMBER:}
+  public-base-url: ${APP_PUBLIC_BASE_URL:http://localhost:8081}
 
   jwt:
     secret: ${APP_JWT_SECRET:change-me-to-a-32-character-minimum-secret}
@@ -120,7 +97,10 @@ app:
     employee-password: ${APP_BOOTSTRAP_EMPLOYEE_PASSWORD:Employee@123}
     employee-email: ${APP_BOOTSTRAP_EMPLOYEE_EMAIL:employee@gpms.local}
     employee-full-name: ${APP_BOOTSTRAP_EMPLOYEE_FULL_NAME:Warehouse Employee}
-    security-username: ${APP_BOOTSTRAP_SECURITY_USERNAME:security}
-    security-password: ${APP_BOOTSTRAP_SECURITY_PASSWORD:Security@123}
-    security-email: ${APP_BOOTSTRAP_SECURITY_EMAIL:security@gpms.local}
-    security-full-name: ${APP_BOOTSTRAP_SECURITY_FULL_NAME:Security Guard}
+
+gpms:
+  reporting:
+    # The zone a working day is measured in. "Issued today" and the
+    # other daily counters run midnight to midnight here, not on the
+    # server's clock - the warehouse decides when its day starts.
+    zone: ${GPMS_REPORTING_ZONE:Asia/Kolkata}

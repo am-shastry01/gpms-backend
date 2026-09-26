@@ -127,6 +127,24 @@ public class DatabaseUrlEnvironmentPostProcessor implements EnvironmentPostProce
              * name), which is already on a private network and where
              * requiring TLS would break the connection instead.
              */
+            /*
+             * Strip parameters that belong to libpq but not to the
+             * JDBC driver.
+             *
+             * Neon hands out connection strings ending
+             * "?sslmode=require&channel_binding=require". sslmode is
+             * understood by both; channel_binding is libpq's spelling
+             * (pgjdbc calls it channelBinding), so the driver forwards
+             * it to the server as a configuration parameter and the
+             * connection dies with "unrecognized configuration
+             * parameter". Dropping it costs nothing - the connection
+             * is still encrypted by sslmode.
+             *
+             * Done here so a string pasted straight from the provider
+             * simply works.
+             */
+            query = stripLibpqOnlyParameters(query);
+
             boolean isExternalHost = host.contains(".");
             boolean sslAlreadySpecified = query.contains("sslmode");
 
@@ -170,6 +188,45 @@ public class DatabaseUrlEnvironmentPostProcessor implements EnvironmentPostProce
              * than as a confusing one from in here.
              */
         }
+    }
+
+    /**
+     * Removes query parameters the PostgreSQL JDBC driver does not
+     * accept, keeping everything else in its original order.
+     */
+    private String stripLibpqOnlyParameters(String query) {
+
+        if (query == null || query.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder kept = new StringBuilder();
+
+        for (String parameter : query.split("&")) {
+
+            if (parameter.isEmpty()) {
+                continue;
+            }
+
+            String name = parameter.contains("=")
+                    ? parameter.substring(0, parameter.indexOf('='))
+                    : parameter;
+
+            if ("channel_binding".equalsIgnoreCase(name)) {
+                System.out.println(
+                        "[datasource] dropped libpq-only parameter '"
+                                + name + "' from DATABASE_URL");
+                continue;
+            }
+
+            if (kept.length() > 0) {
+                kept.append('&');
+            }
+
+            kept.append(parameter);
+        }
+
+        return kept.toString();
     }
 
     private void addProperties(

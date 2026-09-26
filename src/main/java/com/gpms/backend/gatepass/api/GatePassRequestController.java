@@ -2,7 +2,6 @@ package com.gpms.backend.gatepass.api;
 
 import com.gpms.backend.common.api.PageResponse;
 import com.gpms.backend.gatepass.api.dto.AttachmentResponse;
-import com.gpms.backend.gatepass.api.dto.GateActionRequest;
 import com.gpms.backend.gatepass.api.dto.GatePassCreateRequest;
 import com.gpms.backend.gatepass.api.dto.GatePassResponse;
 import com.gpms.backend.gatepass.application.GatePassRequestService;
@@ -75,9 +74,26 @@ public class GatePassRequestController {
     @PreAuthorize("hasAnyRole('ADMIN','MANAGER','EMPLOYEE')")
     public GatePassResponse cancel(
             @PathVariable UUID id,
-            @RequestBody(required = false) GateActionRequest request
+            @RequestParam(required = false) String remarks
     ) {
-        return gatePassRequestService.cancel(id, request);
+        return gatePassRequestService.cancel(id, remarks);
+    }
+
+    /**
+     * The gate pass as a PDF.
+     *
+     * Available from the moment the request is raised - the pass is
+     * not held back until approval - with the manager and admin
+     * signature blocks printing empty until each role signs.
+     */
+    @GetMapping("/{id}/pdf")
+    public ResponseEntity<byte[]> pdf(@PathVariable UUID id) {
+        return ResponseEntity.ok()
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        "inline; filename=gate-pass-" + id + ".pdf")
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(gatePassRequestService.renderPdf(id));
     }
 
     @PostMapping(value = "/{id}/attachments", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -88,11 +104,4 @@ public class GatePassRequestController {
         return gatePassRequestService.addAttachment(id, file);
     }
 
-    @GetMapping("/{id}/qr")
-    public ResponseEntity<byte[]> getQrCode(@PathVariable UUID id) {
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=gate-pass-qr.png")
-                .contentType(MediaType.IMAGE_PNG)
-                .body(gatePassRequestService.getQrPng(id));
-    }
 }

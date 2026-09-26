@@ -1,0 +1,54 @@
+# ---------------------------------------------------------------
+# Local development profile
+#
+#   mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=local
+#
+# Assumes Postgres and MinIO are up via:
+#
+#   docker compose up -d postgres minio
+#
+# Two things here exist to remove a footgun.
+#
+# 1. PORT 8081, not 8080.
+#    docker-compose maps the backend CONTAINER's 8080 to the HOST's
+#    8081. If running from Maven served 8080 instead, the Android
+#    app would need a different URL depending on how the backend
+#    happened to be started that day. Both routes now answer on
+#    8081.
+#
+# 2. DATABASE PORT 15432, not 5432.
+#    compose publishes Postgres on 15432 to avoid colliding with
+#    any Postgres already installed on the machine. Connecting to
+#    5432 from the host reaches that other install - or nothing -
+#    and the error ("database does not exist", or connection
+#    refused) does not make the cause obvious.
+# ---------------------------------------------------------------
+server:
+  port: 8081
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:15432/gpms
+    username: gpms
+    password: gpms
+
+    hikari:
+      # A local Postgres answers instantly and never sleeps, so the
+      # long serverless wake-up allowances in application.yml only
+      # serve to hide a genuinely dead database behind a 30 second
+      # hang. Fail fast instead.
+      connection-timeout: 5000
+      initialization-fail-timeout: 5000
+      maximum-pool-size: 10
+      minimum-idle: 2
+
+  jpa:
+    show-sql: false
+
+logging:
+  level:
+    com.gpms.backend: DEBUG
+    org.flywaydb: INFO
+
+app:
+  public-base-url: http://localhost:8081
