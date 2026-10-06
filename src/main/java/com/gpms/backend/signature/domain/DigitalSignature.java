@@ -35,7 +35,7 @@ public class DigitalSignature extends BaseEntity {
     @Column(name = "content_type", nullable = false, length = 120)
     private String contentType;
 
-    /* bytea, not @Lob - see the note on CompanyProfile.logoData. */
+    /* bytea, not @Lob - see the note on Company.logoData. */
     @Column(name = "image_data", nullable = false)
     private byte[] imageData;
 

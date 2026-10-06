@@ -13,4 +13,12 @@ public interface DriverRepository extends JpaRepository<Driver, UUID> {
     Optional<Driver> findByMobileNumberAndDeletedFalse(String mobileNumber);
 
     List<Driver> findAllByDeletedFalse();
+
+    // ----- company-scoped (what the tenant API must use) -----
+
+    Optional<Driver> findByIdAndCompanyIdAndDeletedFalse(UUID id, UUID companyId);
+
+    Optional<Driver> findByMobileNumberAndCompanyIdAndDeletedFalse(String mobileNumber, UUID companyId);
+
+    List<Driver> findAllByCompanyIdAndDeletedFalse(UUID companyId);
 }

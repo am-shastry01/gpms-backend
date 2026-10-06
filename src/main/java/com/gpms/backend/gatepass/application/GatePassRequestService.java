@@ -2,6 +2,7 @@ package com.gpms.backend.gatepass.application;
 
 import com.gpms.backend.audit.application.AuditLogService;
 import com.gpms.backend.common.exception.BusinessException;
+import com.gpms.backend.company.domain.Company;
 import com.gpms.backend.common.exception.ConflictException;
 import com.gpms.backend.common.exception.ResourceNotFoundException;
 import com.gpms.backend.common.exception.UnauthorizedOperationException;
@@ -111,13 +112,15 @@ public class GatePassRequestService {
     public GatePassResponse create(GatePassCreateRequest request) {
         User currentUser = currentUserService.requireCurrentUser();
         Warehouse warehouse = resolveWarehouse(currentUser, request.warehouseId());
-        Vendor vendor = vendorRepository.findByIdAndDeletedFalse(request.vendorId())
+        Company company = currentUser.getCompany();
+        Vendor vendor = vendorRepository
+                .findByIdAndCompanyIdAndDeletedFalse(request.vendorId(), company.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Vendor not found"));
-        Driver driver = resolveDriver(request);
-        Vehicle vehicle = resolveVehicle(request, vendor);
+        Driver driver = resolveDriver(request, company);
+        Vehicle vehicle = resolveVehicle(request, vendor, company);
 
         GatePassRequest gatePassRequest = new GatePassRequest();
-        gatePassRequest.setRequestNumber(gatePassNumberGenerator.nextRequestNumber());
+        gatePassRequest.setRequestNumber(gatePassNumberGenerator.nextRequestNumber(company));
         gatePassRequest.setWarehouse(warehouse);
         gatePassRequest.setRequestedBy(currentUser);
         gatePassRequest.setVendor(vendor);
@@ -138,7 +141,7 @@ public class GatePassRequestService {
          * A pass with a number and a PENDING status is exactly the
          * normal state of affairs now, not a half-finished one.
          */
-        gatePassRequest.setGatePassNumber(gatePassNumberGenerator.nextGatePassNumber());
+        gatePassRequest.setGatePassNumber(gatePassNumberGenerator.nextGatePassNumber(company));
         gatePassRequest.setStatus(GatePassStatus.PENDING);
         gatePassRequest.setDispatchDate(request.dispatchDate());
         gatePassRequest.setPackageCount(request.packageCount());
@@ -208,13 +211,34 @@ public class GatePassRequestService {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         UUID effectiveWarehouseId = effectiveWarehouseId(currentUser, warehouseId);
         Specification<GatePassRequest> specification = Specification.where(GatePassSpecifications.notDeleted())
+                /*
+                 * First and unconditionally: this company only. An admin
+                 * with no warehouse filter means "all of MY warehouses",
+                 * which without this line would have meant all of
+                 * everybody's.
+                 */
+                .and(GatePassSpecifications.companyEquals(currentUser.companyId()))
                 .and(GatePassSpecifications.hasStatus(status))
                 .and(GatePassSpecifications.warehouseEquals(effectiveWarehouseId))
                 .and(GatePassSpecifications.dispatchDateBetween(fromDate, toDate))
                 .and(GatePassSpecifications.textSearch(query));
-        if (isEmployee(currentUser)) {
-            specification = specification.and(GatePassSpecifications.requestedByEquals(currentUser.getId()));
+        /*
+         * Every role lists the whole warehouse, for the same reason the
+         * detail view does: an employee who cannot see a pass cannot
+         * sign it, and all three roles sign every pass. The employee
+         * used to see only their own, which is why a pass raised by the
+         * admin never appeared in their history.
+         *
+         * The exception is an account that is neither an admin nor
+         * posted to a site. A null warehouse filter means "all of them",
+         * so such an account would have seen every warehouse in the
+         * company - more than anybody intended when it was created
+         * without one. It sees nothing until it is given a warehouse.
+         */
+        if (!hasRole(currentUser, "ADMIN") && effectiveWarehouseId == null) {
+            specification = specification.and(GatePassSpecifications.nothing());
         }
+
         return gatePassRequestRepository.findAll(specification, pageable).map(this::toResponse);
     }
 
@@ -237,8 +261,46 @@ public class GatePassRequestService {
         return toResponse(gatePassRequest);
     }
 
+    /*
+     * What a consignment photo is allowed to be.
+     *
+     * The stored object is handed back to clients as a URL, so an
+     * uploaded text/html or SVG file would run as a page on the storage
+     * origin. Only the formats a photo actually arrives in are
+     * accepted, and the type is taken from this list rather than from
+     * whatever the client claimed.
+     */
+    private static final java.util.Map<String, String> ALLOWED_ATTACHMENT_TYPES =
+            java.util.Map.of(
+                    "image/png", "image/png",
+                    "image/jpeg", "image/jpeg",
+                    "image/jpg", "image/jpeg",
+                    "image/webp", "image/webp",
+                    "application/pdf", "application/pdf");
+
+    private static final long MAX_ATTACHMENT_BYTES = 8L * 1024 * 1024;
+
     public AttachmentResponse addAttachment(UUID requestId, MultipartFile file) {
         GatePassRequest gatePassRequest = findAccessibleRequest(requestId);
+
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException("A file is required");
+        }
+        if (file.getSize() > MAX_ATTACHMENT_BYTES) {
+            throw new BusinessException("The file must be 8 MB or smaller");
+        }
+
+        String claimedType = file.getContentType() == null
+                ? ""
+                : file.getContentType().toLowerCase();
+
+        String safeType = ALLOWED_ATTACHMENT_TYPES.get(claimedType);
+
+        if (safeType == null) {
+            throw new BusinessException(
+                    "Only PNG, JPEG, WebP images or a PDF can be attached");
+        }
+
         User currentUser = currentUserService.requireCurrentUser();
         String objectKey = "warehouses/" + gatePassRequest.getWarehouse().getCode()
                 + "/gate-passes/" + gatePassRequest.getId()
@@ -249,7 +311,11 @@ public class GatePassRequestService {
         attachment.setGatePassRequest(gatePassRequest);
         attachment.setUploadedBy(currentUser);
         attachment.setFileName(storedObject.fileName());
-        attachment.setContentType(storedObject.contentType());
+        /*
+         * The vetted type from the allow-list, not the client's string -
+         * so nothing can be served back as a type it is not.
+         */
+        attachment.setContentType(safeType);
         attachment.setObjectKey(storedObject.objectKey());
         attachment.setObjectUrl(storedObject.objectUrl());
         attachment.setSizeBytes(storedObject.sizeBytes());
@@ -308,15 +374,25 @@ public class GatePassRequestService {
          */
         List<GatePassRequest> pending;
 
+        UUID companyId = currentUser.companyId();
+
+        /*
+         * Same guard as the list: no warehouse and not an admin means no
+         * queue, rather than everybody's queue.
+         */
+        if (!hasRole(currentUser, "ADMIN") && warehouseId == null) {
+            return List.of();
+        }
+
         if (hasRole(currentUser, "ADMIN")) {
             pending = gatePassRequestRepository
-                    .findAwaitingAdminSignature(excluded, warehouseId);
+                    .findAwaitingAdminSignature(excluded, companyId, warehouseId);
         } else if (hasRole(currentUser, "MANAGER")) {
             pending = gatePassRequestRepository
-                    .findAwaitingManagerSignature(excluded, warehouseId);
+                    .findAwaitingManagerSignature(excluded, companyId, warehouseId);
         } else {
             pending = gatePassRequestRepository
-                    .findAwaitingEmployeeSignature(excluded, warehouseId);
+                    .findAwaitingEmployeeSignature(excluded, companyId, warehouseId);
         }
 
         return pending.stream().map(this::toResponse).toList();
@@ -675,7 +751,12 @@ public class GatePassRequestService {
             }
             return currentUser.getWarehouse();
         }
-        Warehouse warehouse = warehouseRepository.findByIdAndDeletedFalse(warehouseId)
+        /*
+         * Scoped to the caller's company, so a warehouse id belonging to
+         * another client resolves to nothing rather than to their site.
+         */
+        Warehouse warehouse = warehouseRepository
+                .findByIdAndCompanyIdAndDeletedFalse(warehouseId, currentUser.companyId())
                 .orElseThrow(() -> new ResourceNotFoundException("Warehouse not found"));
         if (!hasRole(currentUser, "ADMIN")) {
             if (currentUser.getWarehouse() == null
@@ -699,18 +780,32 @@ public class GatePassRequestService {
         return ownWarehouseId;
     }
 
-    private Driver resolveDriver(GatePassCreateRequest request) {
+    /*
+     * Finds the driver inside THIS company, or records a new one for it.
+     *
+     * The company matters more than it looks. Driver mobile numbers used
+     * to be unique across the whole system, so the second client to send
+     * the same lorry driver through their gate would have resolved to the
+     * first client's driver row - and printed that client's spelling of
+     * his name on their pass. Each company now keeps its own record of
+     * the same man.
+     */
+    private Driver resolveDriver(GatePassCreateRequest request, Company company) {
         if (request.driverId() != null) {
-            return driverRepository.findByIdAndDeletedFalse(request.driverId())
+            return driverRepository
+                    .findByIdAndCompanyIdAndDeletedFalse(request.driverId(), company.getId())
                     .orElseThrow(() -> new ResourceNotFoundException("Driver not found"));
         }
         if (request.driverName() == null || request.driverName().isBlank()
                 || request.driverMobile() == null || request.driverMobile().isBlank()) {
             throw new BusinessException("Driver details are required");
         }
-        return driverRepository.findByMobileNumberAndDeletedFalse(request.driverMobile().trim())
+        return driverRepository
+                .findByMobileNumberAndCompanyIdAndDeletedFalse(
+                        request.driverMobile().trim(), company.getId())
                 .orElseGet(() -> {
                     Driver driver = new Driver();
+                    driver.setCompany(company);
                     driver.setName(request.driverName().trim());
                     driver.setMobileNumber(request.driverMobile().trim());
                     driver.setLicenseNumber(request.driverLicenseNumber());
@@ -719,9 +814,14 @@ public class GatePassRequestService {
                 });
     }
 
-    private Vehicle resolveVehicle(GatePassCreateRequest request, Vendor vendor) {
+    private Vehicle resolveVehicle(
+            GatePassCreateRequest request,
+            Vendor vendor,
+            Company company
+    ) {
         if (request.vehicleId() != null) {
-            return vehicleRepository.findByIdAndDeletedFalse(request.vehicleId())
+            return vehicleRepository
+                    .findByIdAndCompanyIdAndDeletedFalse(request.vehicleId(), company.getId())
                     .orElseThrow(() -> new ResourceNotFoundException("Vehicle not found"));
         }
         if (request.truckNumber() == null || request.truckNumber().isBlank()
@@ -729,9 +829,12 @@ public class GatePassRequestService {
             throw new BusinessException("Vehicle details are required");
         }
         String registrationNumber = request.truckNumber().trim().toUpperCase();
-        return vehicleRepository.findByRegistrationNumberIgnoreCaseAndDeletedFalse(registrationNumber)
+        return vehicleRepository
+                .findByRegistrationNumberIgnoreCaseAndCompanyIdAndDeletedFalse(
+                        registrationNumber, company.getId())
                 .orElseGet(() -> {
                     Vehicle vehicle = new Vehicle();
+                    vehicle.setCompany(company);
                     vehicle.setRegistrationNumber(registrationNumber);
                     vehicle.setVehicleType(request.vehicleType().trim());
                     vehicle.setVendor(vendor);
@@ -765,10 +868,23 @@ public class GatePassRequestService {
         GatePassRequest gatePassRequest = gatePassRequestRepository.findByIdAndDeletedFalse(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Gate pass request not found"));
         User currentUser = currentUserService.requireCurrentUser();
+
         /*
-         * An ADMIN may reach any warehouse. Anyone else is limited to
-         * their own - and a user with no warehouse assigned is limited
-         * to nothing, rather than dereferencing null.
+         * The company fence, before anything else.
+         *
+         * An admin runs their own company and nothing beyond it, so this
+         * check applies to every role without exception - it is the one
+         * boundary that is never waived.
+         */
+        if (!gatePassRequest.getWarehouse().getCompany().getId()
+                .equals(currentUser.companyId())) {
+            throw new ResourceNotFoundException("Gate pass request not found");
+        }
+
+        /*
+         * An ADMIN may reach any warehouse of their own company. Anyone
+         * else is limited to their own - and a user with no warehouse
+         * assigned is limited to nothing, rather than dereferencing null.
          */
         if (!hasRole(currentUser, "ADMIN")) {
             if (currentUser.getWarehouse() == null
@@ -776,9 +892,19 @@ public class GatePassRequestService {
                 throw new UnauthorizedOperationException("You cannot access this gate pass");
             }
         }
-        if (isEmployee(currentUser) && !gatePassRequest.getRequestedBy().getId().equals(currentUser.getId())) {
-            throw new UnauthorizedOperationException("You can only access your own requests");
-        }
+        /*
+         * No ownership check beyond the warehouse.
+         *
+         * A gate pass carries three signatures - employee, manager and
+         * admin - and whoever raised it is only one of the three. So an
+         * employee has to be able to open a pass an admin raised, in
+         * order to sign it, and the same the other way round. Limiting
+         * an employee to their own requests made signing impossible for
+         * every pass they did not start.
+         *
+         * The warehouse check above is the real boundary: people see the
+         * passes of the site they work at, and nothing from another one.
+         */
         return gatePassRequest;
     }
 

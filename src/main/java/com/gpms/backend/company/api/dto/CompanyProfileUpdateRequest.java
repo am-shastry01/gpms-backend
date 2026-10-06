@@ -14,6 +14,7 @@ public record CompanyProfileUpdateRequest(
         String phoneNumber,
         @Email(message = "Email is invalid")
         String email,
-        String gstNumber
+        String gstNumber,
+        String website
 ) {
 }

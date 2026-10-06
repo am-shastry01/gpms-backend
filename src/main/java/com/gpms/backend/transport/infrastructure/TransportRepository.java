@@ -22,4 +22,16 @@ public interface TransportRepository extends JpaRepository<Transport, UUID> {
      * points at it.
      */
     List<Transport> findAllByDeletedFalseAndActiveTrueOrderByNameAsc();
+
+    // ----- company-scoped (what the tenant API must use) -----
+
+    Optional<Transport> findByIdAndCompanyIdAndDeletedFalse(UUID id, UUID companyId);
+
+    Optional<Transport> findByCodeIgnoreCaseAndCompanyIdAndDeletedFalse(String code, UUID companyId);
+
+    Optional<Transport> findByNameIgnoreCaseAndCompanyIdAndDeletedFalse(String name, UUID companyId);
+
+    List<Transport> findAllByCompanyIdAndDeletedFalseOrderByNameAsc(UUID companyId);
+
+    List<Transport> findAllByCompanyIdAndDeletedFalseAndActiveTrueOrderByNameAsc(UUID companyId);
 }

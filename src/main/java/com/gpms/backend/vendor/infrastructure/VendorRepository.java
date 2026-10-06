@@ -15,4 +15,14 @@ public interface VendorRepository extends JpaRepository<Vendor, UUID> {
     Optional<Vendor> findByNameIgnoreCaseAndDeletedFalse(String name);
 
     List<Vendor> findAllByDeletedFalse();
+
+    // ----- company-scoped (what the tenant API must use) -----
+
+    Optional<Vendor> findByIdAndCompanyIdAndDeletedFalse(UUID id, UUID companyId);
+
+    Optional<Vendor> findByCodeIgnoreCaseAndCompanyIdAndDeletedFalse(String code, UUID companyId);
+
+    Optional<Vendor> findByNameIgnoreCaseAndCompanyIdAndDeletedFalse(String name, UUID companyId);
+
+    List<Vendor> findAllByCompanyIdAndDeletedFalse(UUID companyId);
 }

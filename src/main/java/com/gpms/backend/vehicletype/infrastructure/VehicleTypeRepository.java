@@ -20,4 +20,14 @@ public interface VehicleTypeRepository extends JpaRepository<VehicleType, UUID> 
      * points at it.
      */
     List<VehicleType> findAllByDeletedFalseAndActiveTrueOrderByNameAsc();
+
+    // ----- company-scoped (what the tenant API must use) -----
+
+    Optional<VehicleType> findByIdAndCompanyIdAndDeletedFalse(UUID id, UUID companyId);
+
+    Optional<VehicleType> findByNameIgnoreCaseAndCompanyIdAndDeletedFalse(String name, UUID companyId);
+
+    List<VehicleType> findAllByCompanyIdAndDeletedFalseOrderByNameAsc(UUID companyId);
+
+    List<VehicleType> findAllByCompanyIdAndDeletedFalseAndActiveTrueOrderByNameAsc(UUID companyId);
 }

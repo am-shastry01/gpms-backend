@@ -16,6 +16,11 @@ public class SecurityUserPrincipal implements UserDetails {
         this.user = user;
     }
 
+    /** The row behind this principal, for checks the filter has to make. */
+    public User getUser() {
+        return user;
+    }
+
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return user.getRoles()
@@ -50,8 +55,19 @@ public class SecurityUserPrincipal implements UserDetails {
         return true;
     }
 
+    /*
+     * Three ways to be switched off, and the company is one of them.
+     *
+     * Suspending a client has to stop every one of their people signing
+     * in - otherwise "suspended" would mean nothing until each account
+     * was disabled by hand.
+     */
     @Override
     public boolean isEnabled() {
-        return user.isActive() && !user.isDeleted();
+        return user.isActive()
+                && !user.isDeleted()
+                && user.getCompany() != null
+                && user.getCompany().isActive()
+                && !user.getCompany().isDeleted();
     }
 }

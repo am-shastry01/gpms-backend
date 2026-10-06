@@ -13,4 +13,13 @@ public interface VehicleRepository extends JpaRepository<Vehicle, UUID> {
     Optional<Vehicle> findByRegistrationNumberIgnoreCaseAndDeletedFalse(String registrationNumber);
 
     List<Vehicle> findAllByDeletedFalse();
+
+    // ----- company-scoped (what the tenant API must use) -----
+
+    Optional<Vehicle> findByIdAndCompanyIdAndDeletedFalse(UUID id, UUID companyId);
+
+    Optional<Vehicle> findByRegistrationNumberIgnoreCaseAndCompanyIdAndDeletedFalse(
+            String registrationNumber, UUID companyId);
+
+    List<Vehicle> findAllByCompanyIdAndDeletedFalse(UUID companyId);
 }

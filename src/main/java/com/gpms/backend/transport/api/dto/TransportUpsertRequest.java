@@ -4,7 +4,11 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 
 public record TransportUpsertRequest(
-        @NotBlank(message = "Transport code is required")
+        /*
+         * Optional. Left out, it is derived from the name - a code is an
+         * internal handle, and asking an admin to invent one before they
+         * can add "Ekart" is how a simple form starts refusing input.
+         */
         String code,
         @NotBlank(message = "Transport name is required")
         String name,

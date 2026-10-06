@@ -7,10 +7,18 @@ server:
 spring:
   application:
     name: warehouse-dispatch-gpms-backend
+  # No fallback credentials.
+  #
+  # These used to default to gpms/gpms, which meant a deployment that
+  # forgot an environment variable did not fail - it quietly ran on a
+  # password published in this repository. Unset now means the app
+  # refuses to start and says which placeholder it could not resolve,
+  # which is the failure you want. docker-compose.yml and
+  # application-local.yml both supply them for development.
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/gpms}
-    username: ${SPRING_DATASOURCE_USERNAME:gpms}
-    password: ${SPRING_DATASOURCE_PASSWORD:gpms}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
     hikari:
@@ -59,10 +67,15 @@ management:
       exposure:
         include: health,info
 
+# The API documentation describes every endpoint and its payloads, and
+# the paths serving it are public. Off unless a deployment asks for it,
+# so a production server does not hand out a map of itself.
 springdoc:
   api-docs:
+    enabled: ${APP_DOCS_ENABLED:false}
     path: /v3/api-docs
   swagger-ui:
+    enabled: ${APP_DOCS_ENABLED:false}
     path: /swagger-ui.html
 
 app:
@@ -72,14 +85,34 @@ app:
   # ---------------------------------------------------------------
   public-base-url: ${APP_PUBLIC_BASE_URL:http://localhost:8081}
 
+  # ---------------------------------------------------------------
+  # The super-admin site at /superadmin.
+  #
+  # Not a row in the users table on purpose: nothing a company admin can
+  # do may ever produce an account that opens it. With no password set, a
+  # random one is generated and printed in the startup log.
+  # ---------------------------------------------------------------
+  superadmin:
+    username: ${APP_SUPERADMIN_USERNAME:superadmin}
+    password: ${APP_SUPERADMIN_PASSWORD:}
+
   jwt:
+    # No usable default on purpose. The placeholder is refused outside
+    # the local profile (see JwtService), because a signing key that is
+    # published in a repository is not a key.
     secret: ${APP_JWT_SECRET:change-me-to-a-32-character-minimum-secret}
-    access-token-minutes: ${APP_JWT_ACCESS_MINUTES:1440}
+    allow-insecure-secret: ${APP_ALLOW_INSECURE_JWT_SECRET:false}
+    # A day was a long time to hold a stolen phone's token. There is no
+    # revocation list, so the expiry is the only thing that ends a
+    # session - eight hours is one shift.
+    access-token-minutes: ${APP_JWT_ACCESS_MINUTES:480}
   storage:
     minio:
       endpoint: ${APP_STORAGE_MINIO_ENDPOINT:http://localhost:9000}
-      access-key: ${APP_STORAGE_MINIO_ACCESS_KEY:minioadmin}
-      secret-key: ${APP_STORAGE_MINIO_SECRET_KEY:minioadmin}
+      # Same reasoning as the datasource above: minioadmin/minioadmin
+      # was a published default, not a default.
+      access-key: ${APP_STORAGE_MINIO_ACCESS_KEY}
+      secret-key: ${APP_STORAGE_MINIO_SECRET_KEY}
       bucket: ${APP_STORAGE_MINIO_BUCKET:gpms-attachments}
   bootstrap:
     enabled: ${APP_BOOTSTRAP_ENABLED:true}

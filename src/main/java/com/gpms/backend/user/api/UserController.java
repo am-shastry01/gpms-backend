@@ -1,6 +1,8 @@
 package com.gpms.backend.user.api;
 
+import com.gpms.backend.user.api.dto.ResetPasswordRequest;
 import com.gpms.backend.user.api.dto.UserCreateRequest;
+import com.gpms.backend.user.api.dto.UserDeleteResponse;
 import com.gpms.backend.user.api.dto.UserResponse;
 import com.gpms.backend.user.application.UserService;
 import jakarta.validation.Valid;
@@ -36,8 +38,16 @@ public class UserController {
         return userService.create(request);
     }
 
+    @PostMapping("/{id}/reset-password")
+    public UserResponse resetPassword(
+            @PathVariable UUID id,
+            @Valid @RequestBody ResetPasswordRequest request
+    ) {
+        return userService.resetPassword(id, request);
+    }
+
     @DeleteMapping("/{id}")
-    public void delete(@PathVariable UUID id) {
-        userService.delete(id);
+    public UserDeleteResponse delete(@PathVariable UUID id) {
+        return userService.delete(id);
     }
 }

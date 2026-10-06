@@ -44,7 +44,7 @@ public class MinioObjectStorageService implements ObjectStorageService {
                     file.getContentType()
             );
         } catch (Exception exception) {
-            throw new BusinessException("Failed to upload file to object storage: " + exception.getMessage());
+            throw new BusinessException("Could not store the uploaded file");
         }
     }
 

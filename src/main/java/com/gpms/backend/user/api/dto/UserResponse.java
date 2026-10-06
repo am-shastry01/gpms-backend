@@ -14,6 +14,7 @@ public record UserResponse(
         UUID warehouseId,
         String warehouseName,
         List<String> roles,
+        boolean mustChangePassword,
         Instant createdAt,
         Instant updatedAt
 ) {

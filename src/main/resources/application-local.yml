@@ -52,3 +52,15 @@ logging:
 
 app:
   public-base-url: http://localhost:8081
+
+  # application.yml deliberately has no fallback for these, so a real
+  # deployment fails loudly when an environment variable is missing. A
+  # local run is the one place they can be spelled out: this is the
+  # docker-compose MinIO on its published port, and nothing here is a
+  # credential for anything that matters.
+  storage:
+    minio:
+      endpoint: http://localhost:9000
+      access-key: minioadmin
+      secret-key: minioadmin
+      bucket: gpms-attachments

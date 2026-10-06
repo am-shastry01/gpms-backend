@@ -31,9 +31,15 @@ public interface GatePassRequestRepository
             where g.deleted = false
               and g.approvalTime >= :start
               and g.approvalTime < :end
+              and g.warehouse.company.id = :companyId
               and (:warehouseId is null or g.warehouse.id = :warehouseId)
             """)
-    long countApprovedBetween(@Param("start") Instant start, @Param("end") Instant end, @Param("warehouseId") UUID warehouseId);
+    long countApprovedBetween(
+            @Param("start") Instant start,
+            @Param("end") Instant end,
+            @Param("companyId") UUID companyId,
+            @Param("warehouseId") UUID warehouseId
+    );
 
     /**
      * Gate passes actually issued in the window.
@@ -49,9 +55,15 @@ public interface GatePassRequestRepository
               and g.gatePassNumber is not null
               and g.createdAt >= :start
               and g.createdAt < :end
+              and g.warehouse.company.id = :companyId
               and (:warehouseId is null or g.warehouse.id = :warehouseId)
             """)
-    long countIssuedBetween(@Param("start") Instant start, @Param("end") Instant end, @Param("warehouseId") UUID warehouseId);
+    long countIssuedBetween(
+            @Param("start") Instant start,
+            @Param("end") Instant end,
+            @Param("companyId") UUID companyId,
+            @Param("warehouseId") UUID warehouseId
+    );
 
     @Query("""
             select v.name, count(g)
@@ -59,6 +71,7 @@ public interface GatePassRequestRepository
             join g.vendor v
             where g.deleted = false
               and g.dispatchDate between :fromDate and :toDate
+              and g.warehouse.company.id = :companyId
               and (:warehouseId is null or g.warehouse.id = :warehouseId)
             group by v.name
             order by count(g) desc
@@ -66,6 +79,7 @@ public interface GatePassRequestRepository
     List<Object[]> countDispatchesByVendor(
             @Param("fromDate") LocalDate fromDate,
             @Param("toDate") LocalDate toDate,
+            @Param("companyId") UUID companyId,
             @Param("warehouseId") UUID warehouseId
     );
 
@@ -75,12 +89,14 @@ public interface GatePassRequestRepository
               and g.status = :status
               and g.updatedAt >= :start
               and g.updatedAt < :end
+              and g.warehouse.company.id = :companyId
               and (:warehouseId is null or g.warehouse.id = :warehouseId)
             """)
     long countByStatusBetween(
             @Param("status") GatePassStatus status,
             @Param("start") Instant start,
             @Param("end") Instant end,
+            @Param("companyId") UUID companyId,
             @Param("warehouseId") UUID warehouseId
     );
 
@@ -88,10 +104,12 @@ public interface GatePassRequestRepository
             select count(g) from GatePassRequest g
             where g.deleted = false
               and g.status in :statuses
+              and g.warehouse.company.id = :companyId
               and (:warehouseId is null or g.warehouse.id = :warehouseId)
             """)
     long countByStatusesAndWarehouse(
             @Param("statuses") List<GatePassStatus> statuses,
+            @Param("companyId") UUID companyId,
             @Param("warehouseId") UUID warehouseId
     );
 
@@ -113,11 +131,14 @@ public interface GatePassRequestRepository
             where g.deleted = false
               and g.status not in :excluded
               and g.employeeApprovedAt is null
+              and g.warehouse.company.id = :companyId
+              and g.warehouse.company.id = :companyId
               and (:warehouseId is null or g.warehouse.id = :warehouseId)
             order by g.createdAt desc
             """)
     List<GatePassRequest> findAwaitingEmployeeSignature(
             @Param("excluded") List<GatePassStatus> excluded,
+            @Param("companyId") UUID companyId,
             @Param("warehouseId") UUID warehouseId
     );
 
@@ -126,11 +147,14 @@ public interface GatePassRequestRepository
             where g.deleted = false
               and g.status not in :excluded
               and g.managerApprovedAt is null
+              and g.warehouse.company.id = :companyId
+              and g.warehouse.company.id = :companyId
               and (:warehouseId is null or g.warehouse.id = :warehouseId)
             order by g.createdAt desc
             """)
     List<GatePassRequest> findAwaitingManagerSignature(
             @Param("excluded") List<GatePassStatus> excluded,
+            @Param("companyId") UUID companyId,
             @Param("warehouseId") UUID warehouseId
     );
 
@@ -139,13 +163,29 @@ public interface GatePassRequestRepository
             where g.deleted = false
               and g.status not in :excluded
               and g.adminApprovedAt is null
+              and g.warehouse.company.id = :companyId
+              and g.warehouse.company.id = :companyId
               and (:warehouseId is null or g.warehouse.id = :warehouseId)
             order by g.createdAt desc
             """)
     List<GatePassRequest> findAwaitingAdminSignature(
             @Param("excluded") List<GatePassStatus> excluded,
+            @Param("companyId") UUID companyId,
             @Param("warehouseId") UUID warehouseId
     );
+
+    /*
+     * How many passes each warehouse of a company has issued. Feeds the
+     * admin's warehouse overview and the super-admin company page.
+     */
+    @Query("""
+            select g.warehouse.id, count(g)
+            from GatePassRequest g
+            where g.deleted = false
+              and g.warehouse.company.id = :companyId
+            group by g.warehouse.id
+            """)
+    List<Object[]> countByWarehouseForCompany(@Param("companyId") UUID companyId);
 
     @Query("""
             select count(g) from GatePassRequest g

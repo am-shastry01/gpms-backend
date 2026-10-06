@@ -4,6 +4,10 @@ import com.gpms.backend.common.domain.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
+import com.gpms.backend.company.domain.Company;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 
 /**
  * A transport company that can be selected on a gate pass.
@@ -15,6 +19,23 @@ import jakarta.persistence.Table;
 @Entity
 @Table(name = "transports")
 public class Transport extends BaseEntity {
+
+    /*
+     * The client this record belongs to. Every list, lookup and
+     * uniqueness check is fenced by it: two companies may both have a
+     * vendor called Ekart, and neither may see the other's.
+     */
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "company_id", nullable = false)
+    private Company company;
+
+    public Company getCompany() {
+        return company;
+    }
+
+    public void setCompany(Company company) {
+        this.company = company;
+    }
 
     @Column(name = "code", nullable = false, unique = true, length = 50)
     private String code;

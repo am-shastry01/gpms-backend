@@ -17,7 +17,12 @@ public class ApplicationUserDetailsService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String username) {
-        return userRepository.findByUsernameIgnoreCaseAndDeletedFalse(username)
+        /*
+         * "username" here is whatever was typed into the sign-in
+         * field, which the app labels as an email address. Either one
+         * resolves to the same account.
+         */
+        return userRepository.findByUsernameOrEmail(username)
                 .map(SecurityUserPrincipal::new)
                 .orElseThrow(() -> new UsernameNotFoundException("Invalid username or password"));
     }

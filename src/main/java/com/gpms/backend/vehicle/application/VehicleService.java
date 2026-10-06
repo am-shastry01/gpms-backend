@@ -13,6 +13,8 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.gpms.backend.common.service.CurrentUserService;
+import com.gpms.backend.company.domain.Company;
 
 @Service
 @Transactional
@@ -21,35 +23,38 @@ public class VehicleService {
     private final VehicleRepository vehicleRepository;
     private final VendorRepository vendorRepository;
     private final VehicleMapper vehicleMapper;
+    private final CurrentUserService currentUserService;
 
     public VehicleService(
             VehicleRepository vehicleRepository,
             VendorRepository vendorRepository,
-            VehicleMapper vehicleMapper
-    ) {
+            VehicleMapper vehicleMapper,
+            CurrentUserService currentUserService) {
         this.vehicleRepository = vehicleRepository;
         this.vendorRepository = vendorRepository;
         this.vehicleMapper = vehicleMapper;
+        this.currentUserService = currentUserService;
     }
 
     public List<VehicleResponse> getAll() {
-        return vehicleRepository.findAllByDeletedFalse().stream().map(vehicleMapper::toResponse).toList();
+        return vehicleRepository.findAllByCompanyIdAndDeletedFalse(companyId()).stream().map(vehicleMapper::toResponse).toList();
     }
 
     public VehicleResponse create(VehicleUpsertRequest request) {
-        vehicleRepository.findByRegistrationNumberIgnoreCaseAndDeletedFalse(request.registrationNumber())
+        vehicleRepository.findByRegistrationNumberIgnoreCaseAndCompanyIdAndDeletedFalse(request.registrationNumber(), companyId())
                 .ifPresent(existing -> {
                     throw new ConflictException("Vehicle registration number already exists");
                 });
         Vehicle vehicle = new Vehicle();
+        vehicle.setCompany(company());
         apply(request, vehicle);
         return vehicleMapper.toResponse(vehicleRepository.save(vehicle));
     }
 
     public VehicleResponse update(UUID id, VehicleUpsertRequest request) {
-        Vehicle vehicle = vehicleRepository.findByIdAndDeletedFalse(id)
+        Vehicle vehicle = vehicleRepository.findByIdAndCompanyIdAndDeletedFalse(id, companyId())
                 .orElseThrow(() -> new ResourceNotFoundException("Vehicle not found"));
-        vehicleRepository.findByRegistrationNumberIgnoreCaseAndDeletedFalse(request.registrationNumber())
+        vehicleRepository.findByRegistrationNumberIgnoreCaseAndCompanyIdAndDeletedFalse(request.registrationNumber(), companyId())
                 .filter(existing -> !existing.getId().equals(id))
                 .ifPresent(existing -> {
                     throw new ConflictException("Vehicle registration number already exists");
@@ -59,7 +64,7 @@ public class VehicleService {
     }
 
     public void delete(UUID id) {
-        Vehicle vehicle = vehicleRepository.findByIdAndDeletedFalse(id)
+        Vehicle vehicle = vehicleRepository.findByIdAndCompanyIdAndDeletedFalse(id, companyId())
                 .orElseThrow(() -> new ResourceNotFoundException("Vehicle not found"));
         vehicle.setDeleted(true);
         vehicle.setDeletedAt(Instant.now());
@@ -69,7 +74,12 @@ public class VehicleService {
     private void apply(VehicleUpsertRequest request, Vehicle vehicle) {
         Vendor vendor = null;
         if (request.vendorId() != null) {
-            vendor = vendorRepository.findByIdAndDeletedFalse(request.vendorId())
+            /*
+             * Scoped as well: an unscoped lookup here would let one
+             * client attach their lorry to another client's vendor.
+             */
+            vendor = vendorRepository
+                    .findByIdAndCompanyIdAndDeletedFalse(request.vendorId(), companyId())
                     .orElseThrow(() -> new ResourceNotFoundException("Vendor not found"));
         }
         vehicle.setRegistrationNumber(request.registrationNumber().trim().toUpperCase());
@@ -77,5 +87,23 @@ public class VehicleService {
         vehicle.setCapacity(request.capacity());
         vehicle.setVendor(vendor);
         vehicle.setActive(request.active() == null || request.active());
+    }
+
+
+    /*
+     * The company the caller belongs to.
+     *
+     * Every read and every uniqueness check below is fenced by it, so
+     * one client's records are invisible to another even though they
+     * share a table. A lookup by id is scoped too - an id guessed or
+     * copied from somewhere else resolves to nothing rather than to
+     * somebody else's row.
+     */
+    private Company company() {
+        return currentUserService.requireCurrentUser().getCompany();
+    }
+
+    private UUID companyId() {
+        return company().getId();
     }
 }

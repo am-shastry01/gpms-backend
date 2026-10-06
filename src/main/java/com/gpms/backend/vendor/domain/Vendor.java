@@ -4,10 +4,31 @@ import com.gpms.backend.common.domain.BaseEntity;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Table;
+import com.gpms.backend.company.domain.Company;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 
 @Entity
 @Table(name = "vendors")
 public class Vendor extends BaseEntity {
+
+    /*
+     * The client this record belongs to. Every list, lookup and
+     * uniqueness check is fenced by it: two companies may both have a
+     * vendor called Ekart, and neither may see the other's.
+     */
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "company_id", nullable = false)
+    private Company company;
+
+    public Company getCompany() {
+        return company;
+    }
+
+    public void setCompany(Company company) {
+        this.company = company;
+    }
 
     @Column(name = "code", nullable = false, unique = true, length = 50)
     private String code;

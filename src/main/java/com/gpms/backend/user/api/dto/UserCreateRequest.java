@@ -7,7 +7,12 @@ import java.util.List;
 import java.util.UUID;
 
 public record UserCreateRequest(
-        @NotBlank(message = "Username is required")
+        /*
+         * Optional. Left out, it becomes the email address - which is
+         * the identity, and already unique. The super-admin site sends
+         * one explicitly only for the short handles it hands out with a
+         * new company.
+         */
         String username,
         @Email(message = "Email is invalid")
         @NotBlank(message = "Email is required")

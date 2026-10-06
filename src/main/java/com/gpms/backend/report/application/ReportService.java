@@ -54,6 +54,13 @@ public class ReportService {
     public DashboardMetricsResponse dashboard(LocalDate date, UUID warehouseId) {
         User currentUser = currentUserService.requireCurrentUser();
         UUID effectiveWarehouseId = resolveWarehouseId(currentUser, warehouseId);
+
+        /*
+         * Every count below is fenced by this. A null warehouse means
+         * "all of them", which for an admin used to mean every client's
+         * - so the company id is not optional anywhere in here.
+         */
+        UUID companyId = currentUser.companyId();
         LocalDate effectiveDate = date == null ? LocalDate.now(reportingZone) : date;
 
         /*
@@ -64,14 +71,27 @@ public class ReportService {
         Instant start = effectiveDate.atStartOfDay(reportingZone).toInstant();
         Instant end = effectiveDate.plusDays(1).atStartOfDay(reportingZone).toInstant();
 
+        /*
+         * An account that is neither an admin nor posted to a site has
+         * no figures of its own: a null warehouse reads as "all of
+         * them", which would have shown it the whole company's numbers.
+         */
+        if (!hasRole(currentUser, "ADMIN") && effectiveWarehouseId == null) {
+            return new DashboardMetricsResponse(
+                    effectiveDate, null, 0, 0, 0, 0, 0, List.of());
+        }
+
         long pendingApprovals = gatePassRequestRepository.count(
                 Specification.where(GatePassSpecifications.notDeleted())
                         .and(GatePassSpecifications.hasStatus(GatePassStatus.PENDING))
+                        .and(GatePassSpecifications.companyEquals(companyId))
                         .and(GatePassSpecifications.warehouseEquals(effectiveWarehouseId))
         );
 
         List<VendorDispatchSummaryResponse> vendorDispatches = gatePassRequestRepository
-                .countDispatchesByVendor(effectiveDate.withDayOfMonth(1), effectiveDate, effectiveWarehouseId)
+                .countDispatchesByVendor(
+                        effectiveDate.withDayOfMonth(1), effectiveDate,
+                        companyId, effectiveWarehouseId)
                 .stream()
                 .map(row -> new VendorDispatchSummaryResponse((String) row[0], (Long) row[1]))
                 .toList();
@@ -80,12 +100,12 @@ public class ReportService {
                 effectiveDate,
                 effectiveWarehouseId,
                 pendingApprovals,
-                gatePassRequestRepository.countApprovedBetween(start, end, effectiveWarehouseId),
-                gatePassRequestRepository.countIssuedBetween(start, end, effectiveWarehouseId),
+                gatePassRequestRepository.countApprovedBetween(start, end, companyId, effectiveWarehouseId),
+                gatePassRequestRepository.countIssuedBetween(start, end, companyId, effectiveWarehouseId),
                 gatePassRequestRepository.countByStatusBetween(
-                        GatePassStatus.REJECTED, start, end, effectiveWarehouseId),
+                        GatePassStatus.REJECTED, start, end, companyId, effectiveWarehouseId),
                 gatePassRequestRepository.countByStatusBetween(
-                        GatePassStatus.COMPLETED, start, end, effectiveWarehouseId),
+                        GatePassStatus.COMPLETED, start, end, companyId, effectiveWarehouseId),
                 vendorDispatches
         );
     }

@@ -13,6 +13,7 @@ public record CompanyProfileResponse(
         String phoneNumber,
         String email,
         String gstNumber,
+        String website,
         boolean hasLogo
 ) {
 }

@@ -1,15 +1,27 @@
 package com.gpms.backend.warehouse.domain;
 
 import com.gpms.backend.common.domain.BaseEntity;
+import com.gpms.backend.company.domain.Company;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
 @Entity
 @Table(name = "warehouses")
 public class Warehouse extends BaseEntity {
 
-    @Column(name = "code", nullable = false, unique = true, length = 50)
+    /*
+     * Who owns this site. Every query a company's own people run is
+     * fenced by this; two clients can both have a WH-01.
+     */
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "company_id", nullable = false)
+    private Company company;
+
+    @Column(name = "code", nullable = false, length = 50)
     private String code;
 
     @Column(name = "name", nullable = false, length = 150)
@@ -35,6 +47,14 @@ public class Warehouse extends BaseEntity {
 
     @Column(name = "active", nullable = false)
     private boolean active = true;
+
+    public Company getCompany() {
+        return company;
+    }
+
+    public void setCompany(Company company) {
+        this.company = company;
+    }
 
     public String getCode() {
         return code;

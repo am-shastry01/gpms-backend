@@ -20,4 +20,14 @@ public interface DestinationRepository extends JpaRepository<Destination, UUID> 
      * points at it.
      */
     List<Destination> findAllByDeletedFalseAndActiveTrueOrderByNameAsc();
+
+    // ----- company-scoped (what the tenant API must use) -----
+
+    Optional<Destination> findByIdAndCompanyIdAndDeletedFalse(UUID id, UUID companyId);
+
+    Optional<Destination> findByNameIgnoreCaseAndCompanyIdAndDeletedFalse(String name, UUID companyId);
+
+    List<Destination> findAllByCompanyIdAndDeletedFalseOrderByNameAsc(UUID companyId);
+
+    List<Destination> findAllByCompanyIdAndDeletedFalseAndActiveTrueOrderByNameAsc(UUID companyId);
 }

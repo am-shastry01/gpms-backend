@@ -43,7 +43,16 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/gpms
       SPRING_DATASOURCE_USERNAME: gpms
       SPRING_DATASOURCE_PASSWORD: gpms
-      APP_JWT_SECRET: change-me-to-a-32-character-minimum-secret
+      # Development only. The app refuses this placeholder unless the
+      # flag below says out loud that this is a dev machine; export
+      # APP_JWT_SECRET to run compose with a real one.
+      APP_JWT_SECRET: ${APP_JWT_SECRET:-change-me-to-a-32-character-minimum-secret}
+      APP_ALLOW_INSECURE_JWT_SECRET: "true"
+      APP_DOCS_ENABLED: "true"
+      # The super-admin site. Development only - change it, and set it
+      # from a secret anywhere real.
+      APP_SUPERADMIN_USERNAME: superadmin
+      APP_SUPERADMIN_PASSWORD: ${APP_SUPERADMIN_PASSWORD:-superadmin123}
       # Where this backend is reachable from outside the container.
       # Only matters for links printed into generated documents; the
       # driver SMS flow it used to serve is gone.

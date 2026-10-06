@@ -1,0 +1,190 @@
+<!doctype html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{superadmin/layout :: head(${company.name})}"></head>
+<body>
+
+<header th:replace="~{superadmin/layout :: bar}"></header>
+
+<main>
+
+    <div class="notice bad" th:if="${error}" th:text="${error}"></div>
+
+    <div class="notice good" th:if="${param.added}">
+        Warehouse added.
+    </div>
+
+    <div class="notice good" th:if="${param.removed}">
+        Warehouse removed.
+    </div>
+
+    <div class="notice good" th:if="${param.created}">
+        Company created. Give their admin the email and password you just set
+        — the app will ask them for a new password on first sign-in.
+    </div>
+
+    <h1 th:text="${company.name}">Company</h1>
+    <p class="lede">
+        <span style="font-weight:700" th:text="${company.code}">CODE</span>
+        &nbsp;·&nbsp;
+        <span th:text="${company.gstNumber != null ? 'GST ' + company.gstNumber : 'No GST on file'}"></span>
+        &nbsp;·&nbsp;
+        <span class="pill on" th:if="${company.active}">Active</span>
+        <span class="pill off" th:unless="${company.active}">Suspended</span>
+    </p>
+
+    <div class="tiles">
+        <div class="tile">
+            <div class="n" th:text="${company.warehouses.size()}">0</div>
+            <div class="k">Warehouses</div>
+        </div>
+        <div class="tile">
+            <div class="n" th:text="${company.people.size()}">0</div>
+            <div class="k">People</div>
+        </div>
+        <div class="tile">
+            <div class="n" th:text="${company.gatePasses}">0</div>
+            <div class="k">Gate passes</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="grid">
+            <div>
+                <div class="k" style="font-size:11.5px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.6px">Email</div>
+                <div th:text="${company.email} ?: '—'">—</div>
+            </div>
+            <div>
+                <div class="k" style="font-size:11.5px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.6px">Phone</div>
+                <div th:text="${company.phoneNumber} ?: '—'">—</div>
+            </div>
+            <div>
+                <div class="k" style="font-size:11.5px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.6px">Website</div>
+                <div th:text="${company.website} ?: '—'">—</div>
+            </div>
+            <div>
+                <div class="k" style="font-size:11.5px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.6px">Address</div>
+                <div th:text="${company.address} ?: '—'">—</div>
+            </div>
+        </div>
+    </div>
+
+    <h2>Warehouses</h2>
+
+    <div class="empty" th:if="${company.warehouses.isEmpty()}">
+        This company has no warehouses.
+    </div>
+
+    <table th:unless="${company.warehouses.isEmpty()}">
+        <thead>
+        <tr>
+            <th>Code</th>
+            <th>Name</th>
+            <th>City</th>
+            <th class="num">Managers</th>
+            <th class="num">Employees</th>
+            <th class="num">Gate passes</th>
+            <th style="width:90px"></th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:each="w : ${company.warehouses}">
+            <td th:text="${w.code}" style="font-weight:700">WH-01</td>
+            <td th:text="${w.name}">Name</td>
+            <td th:text="${w.city} ?: '—'">—</td>
+            <td class="num" th:text="${w.managers}">0</td>
+            <td class="num" th:text="${w.employees}">0</td>
+            <td class="num" th:text="${w.gatePasses}">0</td>
+            <td>
+                <!--
+                    Only offered while nothing points at the warehouse.
+                    The server refuses it anyway, but a button that
+                    cannot work should not be there to press.
+                -->
+                <form th:if="${w.gatePasses == 0 and w.managers == 0 and w.employees == 0}"
+                      th:action="@{/superadmin/companies/{id}/warehouses/{wid}/remove(id=${company.id},wid=${w.id})}"
+                      method="post" style="margin:0">
+                    <button class="btn ghost" type="submit"
+                            style="padding:6px 14px;font-size:12.5px">Remove</button>
+                </form>
+            </td>
+        </tr>
+        </tbody>
+    </table>
+
+    <form class="card" th:action="@{/superadmin/companies/{id}/warehouses(id=${company.id})}"
+          method="post" style="margin-top:14px">
+        <div class="grid" style="align-items:end">
+            <div>
+                <label for="whName">Warehouse name <span class="req">*</span></label>
+                <input type="text" id="whName" name="name" placeholder="Bhopal transit point">
+            </div>
+            <div>
+                <label for="whNumber">Number</label>
+                <input type="text" id="whNumber" name="number" placeholder="bhopalwh1">
+            </div>
+            <div>
+                <button class="btn" type="submit">Add warehouse</button>
+            </div>
+        </div>
+        <p class="hint">
+            Numbers only have to be unique inside this company. Leave it
+            blank and the next WH-nn is used.
+        </p>
+    </form>
+
+    <h2>People</h2>
+
+    <div class="empty" th:if="${company.people.isEmpty()}">
+        Nobody can sign in to this company yet.
+    </div>
+
+    <table th:unless="${company.people.isEmpty()}">
+        <thead>
+        <tr>
+            <th>Name</th>
+            <th>Signs in with</th>
+            <th>Role</th>
+            <th>Warehouse</th>
+            <th>Status</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:each="p : ${company.people}">
+            <td th:text="${p.fullName}" style="font-weight:700">Name</td>
+            <td>
+                <div th:text="${p.email}">email</div>
+                <div class="hint" th:if="${p.mobileNumber}" th:text="${p.mobileNumber}"></div>
+            </td>
+            <td th:text="${p.role}">ROLE</td>
+            <td th:text="${p.warehouseName}">—</td>
+            <td>
+                <span class="pill off" th:unless="${p.active}">Disabled</span>
+                <span class="pill warn" th:if="${p.active and p.mustChangePassword}">Password not set</span>
+                <span class="pill on" th:if="${p.active and !p.mustChangePassword}">Active</span>
+            </td>
+        </tr>
+        </tbody>
+    </table>
+
+    <h2>Access</h2>
+
+    <div class="card">
+        <p style="margin-top:0" th:if="${company.active}">
+            Suspending the company stops every one of its people signing in.
+            Nothing is deleted — their gate passes stay exactly as they are,
+            and resuming puts them straight back to work.
+        </p>
+        <p style="margin-top:0" th:unless="${company.active}">
+            This company is suspended. Nobody there can sign in to the app.
+        </p>
+
+        <form th:action="@{/superadmin/companies/{id}/active(id=${company.id})}" method="post">
+            <input type="hidden" name="active" th:value="${!company.active}">
+            <button class="btn danger" type="submit" th:if="${company.active}">Suspend company</button>
+            <button class="btn" type="submit" th:unless="${company.active}">Resume company</button>
+        </form>
+    </div>
+
+</main>
+</body>
+</html>

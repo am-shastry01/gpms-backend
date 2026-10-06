@@ -1,0 +1,75 @@
+<!doctype html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{superadmin/layout :: head('Companies')}"></head>
+<body>
+
+<header th:replace="~{superadmin/layout :: bar}"></header>
+
+<main>
+
+    <h1>Companies</h1>
+    <p class="lede">Every client on this deployment.</p>
+
+    <div class="tiles">
+        <div class="tile">
+            <div class="n" th:text="${totalCompanies}">0</div>
+            <div class="k">Companies</div>
+        </div>
+        <div class="tile">
+            <div class="n" th:text="${totalWarehouses}">0</div>
+            <div class="k">Warehouses</div>
+        </div>
+        <div class="tile">
+            <div class="n" th:text="${totalPeople}">0</div>
+            <div class="k">People</div>
+        </div>
+        <div class="tile">
+            <div class="n" th:text="${totalGatePasses}">0</div>
+            <div class="k">Gate passes</div>
+        </div>
+    </div>
+
+    <div class="empty" th:if="${companies.isEmpty()}">
+        No companies yet.
+        <a th:href="@{/superadmin/companies/new}">Add the first one.</a>
+    </div>
+
+    <table th:unless="${companies.isEmpty()}">
+        <thead>
+        <tr>
+            <th>Company</th>
+            <th>Code</th>
+            <th>Contact</th>
+            <th>GST</th>
+            <th class="num">Warehouses</th>
+            <th class="num">People</th>
+            <th class="num">Gate passes</th>
+            <th>Status</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr th:each="c : ${companies}">
+            <td>
+                <a th:href="@{/superadmin/companies/{id}(id=${c.id})}"
+                   th:text="${c.name}" style="font-weight:700">Company</a>
+            </td>
+            <td style="font-weight:700" th:text="${c.code}">CODE</td>
+            <td>
+                <div th:text="${c.email} ?: '—'">—</div>
+                <div class="hint" th:text="${c.phoneNumber} ?: ''"></div>
+            </td>
+            <td th:text="${c.gstNumber} ?: '—'">—</td>
+            <td class="num" th:text="${c.warehouses}">0</td>
+            <td class="num" th:text="${c.people}">0</td>
+            <td class="num" th:text="${c.gatePasses}">0</td>
+            <td>
+                <span class="pill on" th:if="${c.active}">Active</span>
+                <span class="pill off" th:unless="${c.active}">Suspended</span>
+            </td>
+        </tr>
+        </tbody>
+    </table>
+
+</main>
+</body>
+</html>

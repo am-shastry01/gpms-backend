@@ -12,12 +12,40 @@ public final class GatePassSpecifications {
     private GatePassSpecifications() {
     }
 
+    /**
+     * Matches nothing.
+     *
+     * For the case where the caller is entitled to see no gate passes at
+     * all. Needed because a null warehouse filter means "every
+     * warehouse", so an account with no warehouse of its own would
+     * otherwise fall through to seeing all of them.
+     */
+    public static Specification<GatePassRequest> nothing() {
+        return (root, query, builder) -> builder.disjunction();
+    }
+
     public static Specification<GatePassRequest> notDeleted() {
         return (root, query, builder) -> builder.isFalse(root.get("deleted"));
     }
 
     public static Specification<GatePassRequest> hasStatus(GatePassStatus status) {
         return status == null ? null : (root, query, builder) -> builder.equal(root.get("status"), status);
+    }
+
+    /*
+     * The tenancy fence.
+     *
+     * A gate pass does not carry a company of its own - it belongs to
+     * one through its warehouse - so this joins through to
+     * warehouse.company. Returning null when the id is null would be a
+     * trap here: a null company means "no company", and the only honest
+     * answer to that is nothing at all, never everything.
+     */
+    public static Specification<GatePassRequest> companyEquals(UUID companyId) {
+        return (root, query, builder) -> companyId == null
+                ? builder.disjunction()
+                : builder.equal(
+                        root.get("warehouse").get("company").get("id"), companyId);
     }
 
     public static Specification<GatePassRequest> warehouseEquals(UUID warehouseId) {

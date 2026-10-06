@@ -14,7 +14,14 @@ public record LoginResponse(
             String email,
             UUID warehouseId,
             String warehouseName,
-            List<String> roles
+            List<String> roles,
+
+            /*
+             * True while the account still carries the password an
+             * admin issued. The app sends the person straight to the
+             * "create a new password" screen when it is.
+             */
+            boolean mustChangePassword
     ) {
     }
 }

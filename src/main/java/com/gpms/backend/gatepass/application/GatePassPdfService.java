@@ -1,13 +1,13 @@
 package com.gpms.backend.gatepass.application;
 
 import com.gpms.backend.common.exception.BusinessException;
-import com.gpms.backend.company.application.CompanyProfileService;
-import com.gpms.backend.company.domain.CompanyProfile;
+import com.gpms.backend.company.domain.Company;
 import com.gpms.backend.gatepass.domain.GatePassItem;
 import com.gpms.backend.gatepass.domain.GatePassRequest;
 import com.gpms.backend.gatepass.infrastructure.GatePassItemRepository;
 import com.gpms.backend.signature.domain.DigitalSignature;
 import com.gpms.backend.user.domain.User;
+import com.lowagie.text.Chunk;
 import com.lowagie.text.Document;
 import com.lowagie.text.Element;
 import com.lowagie.text.Font;
@@ -22,40 +22,36 @@ import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfWriter;
 import java.awt.Color;
 import java.io.ByteArrayOutputStream;
-import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Renders a gate pass as the printable document the client asked
- * for: company logo and name at the head, the pass and vehicle
- * details, the consignment lines, and three signature blocks at the
- * foot.
+ * Renders a gate pass as the document that leaves the gate with the
+ * truck.
  *
- * The signature blocks are the point of the whole document, so they
- * behave carefully:
+ * The order on the page is the order it gets read in at the gate:
  *
- *   - The requester's block is filled the moment the pass is raised,
- *     with their signature, their name and the creation date. The
- *     pass is printed and carried away immediately, so that copy has
- *     to be signed for by whoever raised it.
+ *   1. The company name, so the guard at the far end knows whose pass
+ *      this is before anything else.
+ *   2. Gate pass number on the left, invoice date on the right - the
+ *      two things anybody quotes over the phone about this document.
+ *   3. Vehicle and dispatch: who is driving what, for whom, to where.
+ *   4. The consignment, by name only. A gate pass is not an invoice;
+ *      quantities and prices belong on the invoice it travels with,
+ *      and repeating them here only creates two numbers that can
+ *      disagree.
+ *   5. Three signatures, and nothing beside them. No dates: the
+ *      document says who authorised it, and the database keeps when.
+ *      A printed date next to a signature is the thing people argue
+ *      about, and it is not what the signature is for.
+ *   6. The computer-generated notice and the company's contact line.
  *
- *   - The manager and admin blocks are left genuinely BLANK - a bare
- *     ruled line under the role name - until that role approves.
- *     Nothing is written there, because the printed copy circulates
- *     while it is still unsigned and a placeholder word could be
- *     mistaken for a state the document is in.
- *
- *   - When they do approve, the block shows the signature image that
- *     was in force on the day they signed, their name, and the date
- *     they signed.
- *
- *   - Those dates come off the approval, never off the pass. A pass
- *     created on 1 September and approved on the 6th prints the 6th.
+ * Signature blocks of roles that have not acted stay genuinely blank -
+ * a ruled line with the role under it. The printed copy circulates
+ * while it is still unsigned, and that blank is the statement.
  */
 @Service
 public class GatePassPdfService {
@@ -63,71 +59,85 @@ public class GatePassPdfService {
     private static final DateTimeFormatter DATE =
             DateTimeFormatter.ofPattern("dd MMM yyyy");
 
-    private static final DateTimeFormatter DATE_TIME =
-            DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm");
+    private static final Color INK = new Color(0x1A, 0x1F, 0x26);
+    private static final Color RULE = new Color(0x9A, 0xA4, 0xB0);
+    private static final Color HAIR = new Color(0xD5, 0xDB, 0xE2);
+    private static final Color MUTED = new Color(0x5A, 0x63, 0x70);
 
-    /* The logo's navy, so the document matches the app. */
-    private static final Color NAVY = new Color(0x10, 0x22, 0x39);
-    private static final Color RULE = new Color(0xDD, 0xE4, 0xEC);
-    private static final Color MUTED = new Color(0x5A, 0x6B, 0x84);
-
-    private static final Font H1 = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 18, NAVY);
-    private static final Font H2 = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11, NAVY);
-    private static final Font LABEL = FontFactory.getFont(FontFactory.HELVETICA, 8, MUTED);
-    private static final Font VALUE = FontFactory.getFont(FontFactory.HELVETICA, 10, NAVY);
-    private static final Font VALUE_BOLD = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, NAVY);
-    private static final Font SMALL = FontFactory.getFont(FontFactory.HELVETICA, 8, MUTED);
+    private static final Font COMPANY =
+            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 20, INK);
+    private static final Font TITLE =
+            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11, INK);
+    private static final Font SECTION =
+            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, INK);
+    private static final Font LABEL =
+            FontFactory.getFont(FontFactory.HELVETICA, 8, MUTED);
+    private static final Font VALUE =
+            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, INK);
+    private static final Font BODY =
+            FontFactory.getFont(FontFactory.HELVETICA, 10, INK);
+    private static final Font SMALL =
+            FontFactory.getFont(FontFactory.HELVETICA, 8, MUTED);
+    private static final Font NOTICE =
+            FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 8, MUTED);
 
     /*
-     * Stands in for a scanned signature until real images are
-     * uploaded. Italic serif rather than the body face, so a typed
-     * name in the signature area reads as a mark rather than as one
-     * more line of data.
+     * Stands in for a scanned signature until one is uploaded. Italic
+     * serif rather than the body face, so a typed name in the
+     * signature area reads as a mark rather than one more data field.
      */
     private static final Font SIGNATURE_NAME =
-            FontFactory.getFont(FontFactory.TIMES_ITALIC, 16, NAVY);
+            FontFactory.getFont(FontFactory.TIMES_ITALIC, 15, INK);
 
     private final GatePassItemRepository gatePassItemRepository;
-    private final CompanyProfileService companyProfileService;
 
-    public GatePassPdfService(
-            GatePassItemRepository gatePassItemRepository,
-            CompanyProfileService companyProfileService
-    ) {
+    public GatePassPdfService(GatePassItemRepository gatePassItemRepository) {
         this.gatePassItemRepository = gatePassItemRepository;
-        this.companyProfileService = companyProfileService;
     }
 
     @Transactional(readOnly = true)
     public byte[] render(GatePassRequest pass) {
 
-        CompanyProfile company = companyProfileService.require();
+        /*
+         * The company is taken from the pass itself, through its
+         * warehouse - not from whoever is printing it. A pass belongs to
+         * the client that issued it, so re-printing an old one in a
+         * multi-company deployment still carries the right letterhead
+         * even if the account doing the printing changed.
+         */
+        Company company = pass.getWarehouse() == null
+                ? null
+                : pass.getWarehouse().getCompany();
+
+        if (company == null) {
+            throw new BusinessException(
+                    "This gate pass is not attached to a company");
+        }
 
         List<GatePassItem> items = gatePassItemRepository
                 .findAllByGatePassRequestIdAndDeletedFalseOrderByLineNumberAsc(pass.getId());
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        Document document = new Document(PageSize.A4, 36, 36, 36, 36);
+        Document document = new Document(PageSize.A4, 40, 40, 36, 36);
 
         try {
             PdfWriter.getInstance(document, out);
             document.open();
 
-            addLetterhead(document, company);
-            addTitleBar(document, pass);
-            addDetails(document, pass);
-            addItems(document, items);
-            addRemarks(document, pass);
-            addSignatures(document, pass);
-            addFooter(document);
+            addCompanyName(document, company);
+            addPassLine(document, pass);
+            addVehicleAndDispatch(document, pass);
+            addConsignment(document, items);
+            addAuthorisation(document, pass);
+            addFooter(document, company);
 
             document.close();
 
         } catch (Exception exception) {
             /*
-             * Wrapped rather than propagated: OpenPDF throws checked
-             * DocumentException from nearly every call, and a caller
-             * of "give me the PDF" can do nothing useful with it.
+             * Wrapped rather than propagated: OpenPDF throws a checked
+             * DocumentException from nearly every call, and a caller of
+             * "give me the PDF" can do nothing useful with it.
              */
             throw new BusinessException("Could not generate the gate pass PDF");
         }
@@ -136,223 +146,197 @@ public class GatePassPdfService {
     }
 
     // ---------------------------------------------------------------
-    // HEADER
+    // 1. COMPANY NAME
     // ---------------------------------------------------------------
 
-    private void addLetterhead(Document document, CompanyProfile company) throws Exception {
-
-        PdfPTable head = new PdfPTable(new float[]{1f, 3f});
-        head.setWidthPercentage(100);
-
-        PdfPCell logoCell = new PdfPCell();
-        logoCell.setBorder(Rectangle.NO_BORDER);
-        logoCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+    private void addCompanyName(Document document, Company company) throws Exception {
 
         if (company.getLogoData() != null && company.getLogoData().length > 0) {
             Image logo = Image.getInstance(company.getLogoData());
-            logo.scaleToFit(70, 70);
-            logoCell.addElement(logo);
-        }
-        head.addCell(logoCell);
-
-        PdfPCell nameCell = new PdfPCell();
-        nameCell.setBorder(Rectangle.NO_BORDER);
-        nameCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
-        nameCell.addElement(new Paragraph(nullToDash(company.getName()), H1));
-
-        String address = joinNonBlank(", ",
-                company.getAddressLine1(), company.getAddressLine2(),
-                company.getCity(), company.getState(), company.getPostalCode());
-        if (!address.isBlank()) {
-            nameCell.addElement(new Paragraph(address, SMALL));
+            logo.scaleToFit(54, 54);
+            logo.setAlignment(Element.ALIGN_CENTER);
+            document.add(logo);
         }
 
-        String contact = joinNonBlank("   |   ",
-                blankToNull(company.getPhoneNumber()),
-                blankToNull(company.getEmail()),
-                company.getGstNumber() == null || company.getGstNumber().isBlank()
-                        ? null : "GSTIN " + company.getGstNumber());
-        if (!contact.isBlank()) {
-            nameCell.addElement(new Paragraph(contact, SMALL));
-        }
+        Paragraph name = new Paragraph(nullToDash(company.getName()), COMPANY);
+        name.setAlignment(Element.ALIGN_CENTER);
+        name.setSpacingBefore(2);
+        document.add(name);
 
-        head.addCell(nameCell);
-        document.add(head);
+        Paragraph title = new Paragraph("GATE PASS", TITLE);
+        title.setAlignment(Element.ALIGN_CENTER);
+        title.setSpacingBefore(3);
+        document.add(title);
 
-        document.add(rule(12));
-    }
-
-    private void addTitleBar(Document document, GatePassRequest pass) throws Exception {
-
-        PdfPTable bar = new PdfPTable(new float[]{2f, 1f});
-        bar.setWidthPercentage(100);
-        bar.setSpacingBefore(6);
-
-        PdfPCell title = new PdfPCell(new Phrase("GATE PASS", H1));
-        title.setBorder(Rectangle.NO_BORDER);
-        title.setVerticalAlignment(Element.ALIGN_MIDDLE);
-        bar.addCell(title);
-
-        PdfPCell number = new PdfPCell();
-        number.setBorder(Rectangle.NO_BORDER);
-        number.setHorizontalAlignment(Element.ALIGN_RIGHT);
-
-        Paragraph gp = new Paragraph(nullToDash(pass.getGatePassNumber()), H2);
-        gp.setAlignment(Element.ALIGN_RIGHT);
-        number.addElement(gp);
-
-        Paragraph req = new Paragraph("Request " + nullToDash(pass.getRequestNumber()), SMALL);
-        req.setAlignment(Element.ALIGN_RIGHT);
-        number.addElement(req);
-
-        Paragraph status = new Paragraph(
-                "Status: " + (pass.getStatus() == null ? "-" : pass.getStatus().name()), SMALL);
-        status.setAlignment(Element.ALIGN_RIGHT);
-        number.addElement(status);
-
-        bar.addCell(number);
-        document.add(bar);
-        document.add(rule(10));
+        document.add(rule(8, RULE));
     }
 
     // ---------------------------------------------------------------
-    // DETAILS
+    // 2. GATE PASS NUMBER  |  INVOICE DATE
     // ---------------------------------------------------------------
 
-    private void addDetails(Document document, GatePassRequest pass) throws Exception {
+    private void addPassLine(Document document, GatePassRequest pass) throws Exception {
+
+        PdfPTable row = new PdfPTable(new float[]{1f, 1f});
+        row.setWidthPercentage(100);
+        row.setSpacingBefore(8);
+
+        /*
+         * The gate pass number and nothing else on the left. This is the
+         * number the guard reads out and the number every other record
+         * of this journey is filed under; an invoice number beside it
+         * only invites quoting the wrong one.
+         */
+        PdfPCell left = new PdfPCell();
+        left.setBorder(Rectangle.NO_BORDER);
+        left.addElement(inline("Gate pass : ", nullToDash(pass.getGatePassNumber()),
+                Element.ALIGN_LEFT));
+        row.addCell(left);
+
+        PdfPCell right = new PdfPCell();
+        right.setBorder(Rectangle.NO_BORDER);
+        right.addElement(inline("Invoice date : ", formatDate(pass.getInvoiceDate()),
+                Element.ALIGN_RIGHT));
+        row.addCell(right);
+
+        document.add(row);
+        document.add(rule(8, RULE));
+    }
+
+    /** "Label : value" on one line, the label grey and the value black. */
+    private Paragraph inline(String label, String value, int alignment) {
+        Paragraph paragraph = new Paragraph();
+        paragraph.add(new Chunk(label, LABEL));
+        paragraph.add(new Chunk(value, VALUE));
+        paragraph.setAlignment(alignment);
+        paragraph.setSpacingBefore(2);
+        return paragraph;
+    }
+
+    // ---------------------------------------------------------------
+    // 3. VEHICLE AND DISPATCH
+    // ---------------------------------------------------------------
+
+    private void addVehicleAndDispatch(Document document, GatePassRequest pass) throws Exception {
 
         document.add(sectionHeading("Vehicle and dispatch"));
 
-        PdfPTable grid = new PdfPTable(4);
+        PdfPTable grid = new PdfPTable(3);
         grid.setWidthPercentage(100);
         grid.setSpacingBefore(4);
 
         field(grid, "Vehicle number", pass.getVehicle() == null
                 ? null : pass.getVehicle().getRegistrationNumber());
-        field(grid, "Vehicle type", pass.getVehicle() == null
-                ? null : pass.getVehicle().getVehicleType());
         field(grid, "Driver name", pass.getDriver() == null
                 ? null : pass.getDriver().getName());
-        field(grid, "Driver mobile", pass.getDriver() == null
+        field(grid, "Driver mobile number", pass.getDriver() == null
                 ? null : pass.getDriver().getMobileNumber());
-        field(grid, "Transport company", pass.getVendor() == null
-                ? null : pass.getVendor().getName());
+
+        /*
+         * The typed transport name wins over the linked vendor. A pass
+         * raised for a company with no vendor record still has to print
+         * who is carrying the load.
+         */
+        field(grid, "Transport company", firstNonBlank(
+                pass.getTransportName(),
+                pass.getVendor() == null ? null : pass.getVendor().getName()));
+
         field(grid, "Destination", pass.getDestination());
-        field(grid, "Dispatch date", formatDate(pass.getDispatchDate()));
-        field(grid, "Warehouse", pass.getWarehouse() == null
+        field(grid, "Warehouse name", pass.getWarehouse() == null
                 ? null : pass.getWarehouse().getName());
+        field(grid, "Dispatch date", formatDate(pass.getDispatchDate()));
 
         document.add(grid);
     }
 
-    private void addItems(Document document, List<GatePassItem> items) throws Exception {
+    // ---------------------------------------------------------------
+    // 4. CONSIGNMENT - NAMES ONLY
+    // ---------------------------------------------------------------
+
+    private void addConsignment(Document document, List<GatePassItem> items) throws Exception {
 
         document.add(sectionHeading("Consignment"));
 
-        PdfPTable table = new PdfPTable(new float[]{0.7f, 5f, 1.3f, 1.5f});
+        PdfPTable table = new PdfPTable(new float[]{0.7f, 9.3f});
         table.setWidthPercentage(100);
         table.setSpacingBefore(4);
 
         headerCell(table, "#");
-        headerCell(table, "Description");
-        headerCell(table, "Qty");
-        headerCell(table, "Unit");
+        headerCell(table, "Consignment");
 
         if (items.isEmpty()) {
-            PdfPCell empty = new PdfPCell(new Phrase("No consignment lines recorded.", VALUE));
-            empty.setColspan(4);
+
+            PdfPCell empty = new PdfPCell(new Phrase("No consignment recorded.", BODY));
+            empty.setColspan(2);
             empty.setPadding(6);
-            empty.setBorderColor(RULE);
+            empty.setBorderColor(HAIR);
             table.addCell(empty);
+
         } else {
+
+            int index = 1;
+
             for (GatePassItem item : items) {
-                bodyCell(table, String.valueOf(item.getLineNumber()), Element.ALIGN_CENTER);
+                bodyCell(table, String.valueOf(index), Element.ALIGN_CENTER);
                 bodyCell(table, nullToDash(item.getItemDescription()), Element.ALIGN_LEFT);
-                bodyCell(table, item.getQuantity() == null
-                        ? "-" : String.valueOf(item.getQuantity()), Element.ALIGN_CENTER);
-                bodyCell(table, nullToDash(item.getUnitOfMeasure()), Element.ALIGN_CENTER);
+                index++;
             }
         }
 
         document.add(table);
     }
 
-    private void addRemarks(Document document, GatePassRequest pass) throws Exception {
-
-        if (pass.getRemarks() == null || pass.getRemarks().isBlank()) {
-            return;
-        }
-        document.add(sectionHeading("Remarks"));
-        Paragraph remarks = new Paragraph(pass.getRemarks(), VALUE);
-        remarks.setSpacingBefore(4);
-        document.add(remarks);
-    }
-
     // ---------------------------------------------------------------
-    // SIGNATURES
+    // 5. AUTHORISATION - THREE SIGNATURES, NO DATES
     // ---------------------------------------------------------------
 
-    private void addSignatures(Document document, GatePassRequest pass) throws Exception {
+    private void addAuthorisation(Document document, GatePassRequest pass) throws Exception {
 
-        document.add(rule(18));
         document.add(sectionHeading("Authorisation"));
 
         PdfPTable table = new PdfPTable(3);
         table.setWidthPercentage(100);
-        table.setSpacingBefore(8);
+        table.setSpacingBefore(10);
 
         /*
-         * The employee block, not "requested by".
-         *
-         * Any of the three roles can raise a pass, so the requester
-         * is not necessarily the employee - and on a manager-raised
-         * pass this block stays blank until an employee signs it,
-         * which is exactly what the printed document should show.
+         * The employee block, not "requested by": any of the three
+         * roles can raise a pass, so on a manager-raised one this block
+         * stays blank until an employee signs it - which is exactly
+         * what the printed document should show.
          */
         table.addCell(signatureCell(
                 "Employee",
                 pass.getEmployeeApprovedBy(),
                 pass.getEmployeeSignature(),
-                pass.getEmployeeApprovedAt()));
+                pass.getEmployeeApprovedAt() != null));
 
         table.addCell(signatureCell(
                 "Manager",
                 pass.getManagerApprovedBy(),
                 pass.getManagerSignature(),
-                pass.getManagerApprovedAt()));
+                pass.getManagerApprovedAt() != null));
 
         table.addCell(signatureCell(
                 "Admin",
                 pass.getAdminApprovedBy(),
                 pass.getAdminSignature(),
-                pass.getAdminApprovedAt()));
+                pass.getAdminApprovedAt() != null));
 
         document.add(table);
     }
 
-    /**
-     * One signature block.
-     *
-     * [signedAt] null means this role has not acted. The block then
-     * prints as a bare ruled line with only the role name under it -
-     * no name, no date, no placeholder text. That blank is the
-     * audit trail saying "not authorised yet", and it fills in
-     * whenever the approver gets to it, days later if need be.
-     */
     private PdfPCell signatureCell(
             String role,
             User person,
             DigitalSignature signature,
-            Instant signedAt
+            boolean signed
     ) throws Exception {
 
         PdfPCell cell = new PdfPCell();
         cell.setBorder(Rectangle.NO_BORDER);
         cell.setPadding(6);
-        cell.setMinimumHeight(86);
+        cell.setMinimumHeight(80);
         cell.setVerticalAlignment(Element.ALIGN_BOTTOM);
-
-        boolean signed = signedAt != null;
 
         boolean hasImage = signature != null
                 && signature.getImageData() != null
@@ -361,69 +345,122 @@ public class GatePassPdfService {
         if (signed && hasImage) {
 
             Image image = Image.getInstance(signature.getImageData());
-            image.scaleToFit(120, 38);
+            image.scaleToFit(115, 36);
             Paragraph holder = new Paragraph();
-            holder.add(new com.lowagie.text.Chunk(image, 0, 0));
+            holder.add(new Chunk(image, 0, 0));
             cell.addElement(holder);
 
         } else if (signed) {
 
             /*
-             * Signed, but no image on file yet.
-             *
-             * The typed name goes in the signature area instead of a
-             * blank space, so the document still shows WHO signed it
-             * rather than looking unsigned. Once signatures are
-             * uploaded the branch above takes over and nothing else
-             * about this block changes.
+             * Signed, but no image on file. The typed name goes in the
+             * signature area so the document still shows who signed
+             * rather than looking unsigned.
              */
             Paragraph typed = new Paragraph(
                     person == null ? " " : person.getFullName(), SIGNATURE_NAME);
-            typed.setSpacingAfter(6);
+            typed.setSpacingAfter(4);
             cell.addElement(typed);
 
         } else {
+
             /*
-             * Not signed. Left deliberately empty - the printed copy
-             * circulates while it is still unauthorised, and the
-             * blank IS the statement.
-             *
-             * The spacer keeps the block the same height as a signed
-             * one, so the three columns stay level on the page.
+             * The spacer keeps an unsigned block the same height as a
+             * signed one, so the three columns stay level.
              */
-            Paragraph spacer = new Paragraph(" ", VALUE);
-            spacer.setSpacingAfter(22);
+            Paragraph spacer = new Paragraph(" ", BODY);
+            spacer.setSpacingAfter(20);
             cell.addElement(spacer);
         }
 
-        cell.addElement(rule(2));
+        cell.addElement(rule(2, RULE));
 
         /*
-         * A single space, not an empty string: OpenPDF drops a
+         * A single space rather than an empty string: OpenPDF drops a
          * zero-length paragraph entirely, which would shorten the
-         * unsigned blocks and leave the three columns sitting at
-         * different heights.
+         * unsigned blocks and leave the columns at different heights.
          */
         Paragraph name = new Paragraph(
-                signed ? (person == null ? " " : person.getFullName()) : " ",
-                VALUE_BOLD);
+                signed && person != null ? person.getFullName() : " ", VALUE);
         name.setSpacingBefore(3);
         cell.addElement(name);
 
         cell.addElement(new Paragraph(role, LABEL));
 
-        cell.addElement(new Paragraph(signed ? formatInstant(signedAt) : " ", SMALL));
-
         return cell;
     }
 
-    private void addFooter(Document document) throws Exception {
-        document.add(rule(16));
-        Paragraph note = new Paragraph(
-                "Computer generated gate pass. Valid only with the authorisations shown above.",
-                SMALL);
-        note.setAlignment(Element.ALIGN_CENTER);
-        document.add(note);
+    // ---------------------------------------------------------------
+    // 6. NOTICE AND CONTACT LINE
+    // ---------------------------------------------------------------
+
+    private void addFooter(Document document, Company company) throws Exception {
+
+        document.add(rule(20, RULE));
+
+        Paragraph notice = new Paragraph(
+                "This is a computer generated gate pass.", NOTICE);
+        notice.setAlignment(Element.ALIGN_CENTER);
+        notice.setSpacingBefore(6);
+        document.add(notice);
+
+        /*
+         * The company's own details, boxed, at the left foot of the page
+         * - where a letterhead puts them. Half-width on purpose: a box
+         * stretched across the sheet reads as another section of the
+         * pass rather than as the sender's address.
+         */
+        PdfPTable row = new PdfPTable(new float[]{1.3f, 1f});
+        row.setWidthPercentage(100);
+        row.setSpacingBefore(14);
+        row.setHorizontalAlignment(Element.ALIGN_LEFT);
+
+        PdfPCell box = new PdfPCell();
+        box.setBorder(Rectangle.BOX);
+        box.setBorderColor(RULE);
+        box.setBorderWidth(0.8f);
+        box.setPadding(10);
+
+        String address = joinNonBlank(", ",
+                company.getAddressLine1(), company.getAddressLine2(),
+                company.getCity(), company.getState(), company.getPostalCode());
+
+        if (!address.isBlank()) {
+            box.addElement(new Paragraph(address, SMALL));
+        }
+
+        if (blankToNull(company.getPhoneNumber()) != null) {
+            box.addElement(new Paragraph("Phone : " + company.getPhoneNumber(), SMALL));
+        }
+
+        if (blankToNull(company.getEmail()) != null) {
+            box.addElement(new Paragraph("Email : " + company.getEmail(), SMALL));
+        }
+
+        if (blankToNull(company.getWebsite()) != null) {
+            box.addElement(new Paragraph(company.getWebsite(), SMALL));
+        }
+
+        /*
+         * OpenPDF collapses a cell with nothing in it and the box loses
+         * its borders, so an unfilled company profile still gets one
+         * line.
+         */
+        if (address.isBlank()
+                && blankToNull(company.getPhoneNumber()) == null
+                && blankToNull(company.getEmail()) == null
+                && blankToNull(company.getWebsite()) == null) {
+            box.addElement(new Paragraph(nullToDash(company.getName()), SMALL));
+        }
+
+        row.addCell(box);
+
+        PdfPCell filler = new PdfPCell();
+        filler.setBorder(Rectangle.NO_BORDER);
+        filler.addElement(new Paragraph(" ", SMALL));
+        row.addCell(filler);
+
+        document.add(row);
     }
 
     // ---------------------------------------------------------------
@@ -431,19 +468,19 @@ public class GatePassPdfService {
     // ---------------------------------------------------------------
 
     private Paragraph sectionHeading(String text) {
-        Paragraph heading = new Paragraph(text.toUpperCase(), H2);
-        heading.setSpacingBefore(14);
+        Paragraph heading = new Paragraph(text.toUpperCase(), SECTION);
+        heading.setSpacingBefore(16);
         return heading;
     }
 
-    private PdfPTable rule(float spacingBefore) {
+    private PdfPTable rule(float spacingBefore, Color color) {
         PdfPTable line = new PdfPTable(1);
         line.setWidthPercentage(100);
         line.setSpacingBefore(spacingBefore);
         PdfPCell cell = new PdfPCell();
         cell.setFixedHeight(1f);
         cell.setBorder(Rectangle.BOTTOM);
-        cell.setBorderColorBottom(RULE);
+        cell.setBorderColorBottom(color);
         line.addCell(cell);
         return line;
     }
@@ -461,27 +498,21 @@ public class GatePassPdfService {
     private void headerCell(PdfPTable table, String text) {
         PdfPCell cell = new PdfPCell(new Phrase(text.toUpperCase(), LABEL));
         cell.setPadding(6);
-        cell.setBackgroundColor(new Color(0xF4, 0xF7, 0xFB));
-        cell.setBorderColor(RULE);
+        cell.setBackgroundColor(new Color(0xF2, 0xF5, 0xF8));
+        cell.setBorderColor(HAIR);
         table.addCell(cell);
     }
 
     private void bodyCell(PdfPTable table, String text, int alignment) {
-        PdfPCell cell = new PdfPCell(new Phrase(text, VALUE));
+        PdfPCell cell = new PdfPCell(new Phrase(text, BODY));
         cell.setPadding(6);
-        cell.setBorderColor(RULE);
+        cell.setBorderColor(HAIR);
         cell.setHorizontalAlignment(alignment);
         table.addCell(cell);
     }
 
     private String formatDate(LocalDate date) {
-        return date == null ? null : DATE.format(date);
-    }
-
-    private String formatInstant(Instant instant) {
-        return instant == null
-                ? "-"
-                : DATE_TIME.format(instant.atZone(ZoneId.systemDefault()));
+        return date == null ? "-" : DATE.format(date);
     }
 
     private String nullToDash(String value) {
@@ -490,6 +521,13 @@ public class GatePassPdfService {
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) {
+            return first;
+        }
+        return second;
     }
 
     private String joinNonBlank(String separator, String... parts) {

@@ -1,0 +1,171 @@
+<!doctype html>
+<!--
+    Shared chrome for the super-admin site.
+
+    One stylesheet, inlined. This is an internal tool served by the same
+    Spring app as the API, and an external font or CSS host would be one
+    more thing that has to be reachable for the page to be legible.
+-->
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:fragment="head(title)">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title th:text="${title} + ' · Gatepass control'">Gatepass control</title>
+    <style>
+        :root {
+            --ink: #23282F;
+            --ink-soft: #5A636F;
+            --line: #D7DEE6;
+            --panel: #EDF1F6;
+            --ground: #F7F9FB;
+            --white: #FFFFFF;
+            --accent: #181C21;
+            --good: #15724A;
+            --bad: #9B1C12;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: var(--ground);
+            color: var(--ink);
+            font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+            font-size: 14.5px;
+            line-height: 1.5;
+        }
+
+        a { color: var(--ink); }
+
+        header.bar {
+            background: var(--white);
+            border-bottom: 1px solid var(--line);
+            padding: 14px 24px;
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            position: sticky;
+            top: 0;
+            z-index: 5;
+        }
+
+        .brand {
+            font-size: 19px;
+            font-weight: 800;
+            letter-spacing: -0.4px;
+        }
+
+        .brand span { color: var(--ink-soft); font-weight: 600; }
+
+        header.bar nav { display: flex; gap: 16px; margin-left: auto; align-items: center; }
+
+        header.bar nav a { text-decoration: none; font-weight: 600; color: var(--ink-soft); }
+        header.bar nav a:hover { color: var(--ink); }
+
+        main { max-width: 1120px; margin: 0 auto; padding: 28px 24px 64px; }
+
+        h1 { font-size: 26px; letter-spacing: -0.5px; margin: 0 0 4px; }
+        h2 { font-size: 17px; letter-spacing: -0.2px; margin: 32px 0 12px; }
+        p.lede { color: var(--ink-soft); margin: 0 0 24px; }
+
+        .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 28px; }
+
+        .tile {
+            background: var(--white);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 16px 18px;
+        }
+
+        .tile .n { font-size: 26px; font-weight: 800; letter-spacing: -0.6px; }
+        .tile .k { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-soft); }
+
+        table { width: 100%; border-collapse: collapse; background: var(--white); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+        th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+        th { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--ink-soft); background: var(--panel); }
+        tr:last-child td { border-bottom: 0; }
+        td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+        .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+        .pill.on { background: #DCF0E6; color: var(--good); }
+        .pill.off { background: #FBE3E0; color: var(--bad); }
+        .pill.warn { background: #FBF0D9; color: #7A5B12; }
+
+        .btn {
+            display: inline-block;
+            background: var(--accent);
+            color: var(--white);
+            border: 0;
+            border-radius: 999px;
+            padding: 11px 22px;
+            font-size: 14px;
+            font-weight: 700;
+            text-decoration: none;
+            cursor: pointer;
+        }
+
+        .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+        .btn.danger { background: var(--bad); }
+
+        form.card, .card {
+            background: var(--white);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 22px;
+        }
+
+        fieldset { border: 0; padding: 0; margin: 0 0 26px; }
+        legend { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.8px; color: var(--ink-soft); padding: 0 0 10px; }
+
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+
+        label { display: block; font-size: 12px; font-weight: 700; color: var(--ink-soft); margin-bottom: 5px; }
+        label .req { color: var(--bad); }
+
+        input[type=text], input[type=email], input[type=password], textarea {
+            width: 100%;
+            padding: 11px 13px;
+            border: 1px solid var(--ink);
+            border-radius: 11px;
+            font: inherit;
+            font-weight: 600;
+            color: var(--ink);
+            background: var(--white);
+        }
+
+        textarea { min-height: 104px; resize: vertical; }
+
+        .hint { font-size: 12px; color: var(--ink-soft); margin-top: 5px; }
+
+        .notice { border-radius: 12px; padding: 12px 16px; margin-bottom: 20px; font-weight: 600; }
+        .notice.bad { background: #FBE3E0; color: var(--bad); }
+        .notice.good { background: #DCF0E6; color: var(--good); }
+
+        .errors { margin: 0 0 20px; padding: 12px 16px 12px 34px; background: #FBE3E0; color: var(--bad); border-radius: 12px; font-weight: 600; }
+
+        .empty { background: var(--white); border: 1px dashed var(--line); border-radius: 14px; padding: 34px; text-align: center; color: var(--ink-soft); }
+
+        .row-actions { display: flex; gap: 10px; align-items: center; }
+
+        @media (max-width: 620px) {
+            main { padding: 20px 16px 48px; }
+            table { font-size: 13px; }
+            th, td { padding: 9px 10px; }
+        }
+    </style>
+</head>
+<body>
+
+<header class="bar" th:fragment="bar">
+    <div class="brand">Gatepass <span>control</span></div>
+    <nav>
+        <a th:href="@{/superadmin}">Companies</a>
+        <a th:href="@{/superadmin/companies/new}">Add company</a>
+        <form th:action="@{/superadmin/logout}" method="post" style="margin:0">
+            <button class="btn ghost" type="submit">Sign out</button>
+        </form>
+    </nav>
+</header>
+
+</body>
+</html>

@@ -9,6 +9,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -46,6 +47,11 @@ public class SecurityConfig {
     }
 
     @Bean
+    /*
+     * The API chain, and the last one: it has no securityMatcher, so it
+     * catches everything the /superadmin chain (order 1) did not.
+     */
+    @Order(2)
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .cors(Customizer.withDefaults())
@@ -56,13 +62,13 @@ public class SecurityConfig {
                         .permitAll()
                         .requestMatchers(
                                 /*
-                                 * The driver's pass page. Opened from
-                                 * an SMS link on a phone with no
-                                 * account, so it cannot require a
-                                 * token - the random id in the URL is
-                                 * the credential, and it expires.
+                                 * Signing in is the one thing that
+                                 * cannot require a token. Everything
+                                 * else under /auth - /me and
+                                 * /change-password - needs one, and
+                                 * says so below.
                                  */
-                                "/api/v1/auth/**",
+                                "/api/v1/auth/login",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
                                 "/v3/api-docs/**",

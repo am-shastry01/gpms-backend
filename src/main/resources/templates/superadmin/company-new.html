@@ -1,0 +1,227 @@
+<!doctype html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{superadmin/layout :: head('Add company')}"></head>
+<body>
+
+<header th:replace="~{superadmin/layout :: bar}"></header>
+
+<main>
+
+    <h1>Add a company</h1>
+    <p class="lede">
+        This creates the company, its warehouses and the admin account that
+        runs them. The admin signs in to the app with the email below and is
+        asked to choose their own password straight away.
+    </p>
+
+    <div class="notice bad" th:if="${error}" th:text="${error}"></div>
+
+    <form class="card" th:action="@{/superadmin/companies}" th:object="${form}" method="post">
+
+        <!--
+            Inside the form, because #fields only knows about the bound
+            object within a th:object scope.
+        -->
+        <div class="errors" th:if="${#fields.hasAnyErrors()}">
+            <div th:each="e : ${#fields.allErrors()}" th:text="${e}"></div>
+        </div>
+
+        <fieldset>
+            <legend>Company</legend>
+            <div class="grid">
+                <div>
+                    <label for="name">Company name <span class="req">*</span></label>
+                    <input type="text" id="name" th:field="*{name}" placeholder="e.g. Youth Robe">
+                </div>
+                <div>
+                    <label for="code">Short code <span class="req">*</span></label>
+                    <input type="text" id="code" th:field="*{code}"
+                           placeholder="e.g. YROBE" maxlength="12">
+                    <p class="hint">
+                        Goes in front of every number this company issues —
+                        YROBE-GP-2026-000001. Letters and digits, 2 to 12.
+                    </p>
+                </div>
+                <div>
+                    <label for="gstNumber">GST number</label>
+                    <input type="text" id="gstNumber" th:field="*{gstNumber}">
+                </div>
+                <div>
+                    <label for="phoneNumber">Phone number</label>
+                    <input type="text" id="phoneNumber" th:field="*{phoneNumber}">
+                </div>
+                <div>
+                    <label for="email">Email</label>
+                    <input type="email" id="email" th:field="*{email}">
+                </div>
+                <div>
+                    <label for="website">Website</label>
+                    <input type="text" id="website" th:field="*{website}" placeholder="www.example.com">
+                </div>
+            </div>
+        </fieldset>
+
+        <fieldset>
+            <legend>Address</legend>
+            <div class="grid">
+                <div>
+                    <label for="addressLine1">Address line 1</label>
+                    <input type="text" id="addressLine1" th:field="*{addressLine1}">
+                </div>
+                <div>
+                    <label for="addressLine2">Address line 2</label>
+                    <input type="text" id="addressLine2" th:field="*{addressLine2}">
+                </div>
+                <div>
+                    <label for="city">City</label>
+                    <input type="text" id="city" th:field="*{city}">
+                </div>
+                <div>
+                    <label for="state">State</label>
+                    <input type="text" id="state" th:field="*{state}">
+                </div>
+                <div>
+                    <label for="postalCode">Postal code</label>
+                    <input type="text" id="postalCode" th:field="*{postalCode}">
+                </div>
+            </div>
+            <p class="hint">
+                This address prints in the box at the foot of every gate pass
+                the company issues, with its phone, email and website.
+            </p>
+        </fieldset>
+
+        <fieldset>
+            <legend>Warehouses</legend>
+
+            <table class="rows" id="warehouseRows">
+                <thead>
+                <tr>
+                    <th style="width:60%">Warehouse name <span class="req">*</span></th>
+                    <th>Number</th>
+                    <th style="width:44px"></th>
+                </tr>
+                </thead>
+                <tbody>
+                <!--
+                    Repeated input names rather than indexed ones, so
+                    adding and removing rows never has to renumber
+                    anything. Three empty rows to start with.
+                -->
+                <tr>
+                    <td><input type="text" name="warehouseName" placeholder="Harda main warehouse"></td>
+                    <td><input type="text" name="warehouseCode" placeholder="hardawh1"></td>
+                    <td><button type="button" class="xrow" title="Remove">&times;</button></td>
+                </tr>
+                <tr>
+                    <td><input type="text" name="warehouseName" placeholder="Indore depot"></td>
+                    <td><input type="text" name="warehouseCode" placeholder="indorewh1"></td>
+                    <td><button type="button" class="xrow" title="Remove">&times;</button></td>
+                </tr>
+                <tr>
+                    <td><input type="text" name="warehouseName"></td>
+                    <td><input type="text" name="warehouseCode"></td>
+                    <td><button type="button" class="xrow" title="Remove">&times;</button></td>
+                </tr>
+                </tbody>
+            </table>
+
+            <button type="button" class="btn ghost" id="addWarehouseRow"
+                    style="margin-top:12px">Add another warehouse</button>
+
+            <p class="hint">
+                The number is yours to choose — type it how you want it,
+                like <strong>indorewh1</strong>. Rows left blank are
+                ignored, and a row with no number gets WH-01, WH-02 in
+                order. Numbers only have to be unique inside this company,
+                so two clients can both have a WH-01.
+            </p>
+        </fieldset>
+
+        <fieldset>
+            <legend>Their admin</legend>
+            <div class="grid">
+                <div>
+                    <label for="adminFullName">Full name <span class="req">*</span></label>
+                    <input type="text" id="adminFullName" th:field="*{adminFullName}">
+                </div>
+                <div>
+                    <label for="adminEmail">Email <span class="req">*</span></label>
+                    <input type="email" id="adminEmail" th:field="*{adminEmail}">
+                </div>
+                <div>
+                    <label for="adminMobile">Mobile number</label>
+                    <input type="text" id="adminMobile" th:field="*{adminMobile}">
+                </div>
+                <div>
+                    <label for="adminPassword">First password <span class="req">*</span></label>
+                    <input type="text" id="adminPassword" th:field="*{adminPassword}">
+                </div>
+            </div>
+            <p class="hint">
+                The email is how they sign in — no username to invent, and two
+                companies can both employ a Ravi. The password is temporary:
+                the app makes them set their own on first sign-in, after which
+                you no longer know it.
+            </p>
+        </fieldset>
+
+        <div class="row-actions">
+            <button class="btn" type="submit">Create company</button>
+            <a class="btn ghost" th:href="@{/superadmin}">Cancel</a>
+        </div>
+
+    </form>
+
+<style>
+    table.rows { border-radius: 12px; }
+    table.rows th { background: var(--panel); }
+    table.rows td { padding: 8px 10px; }
+    table.rows input { border-radius: 9px; padding: 9px 11px; }
+    button.xrow {
+        background: transparent;
+        border: 0;
+        color: var(--bad);
+        font-size: 20px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 4px 8px;
+    }
+</style>
+
+<script>
+    /*
+     * Plain DOM work: clone the last row, empty it, append. No indexes
+     * to maintain because every row posts under the same two names.
+     */
+    (function () {
+        var table = document.getElementById('warehouseRows');
+        var body = table.querySelector('tbody');
+
+        document.getElementById('addWarehouseRow').addEventListener('click', function () {
+            var row = body.rows[body.rows.length - 1].cloneNode(true);
+            row.querySelectorAll('input').forEach(function (input) {
+                input.value = '';
+                input.removeAttribute('placeholder');
+            });
+            body.appendChild(row);
+            row.querySelector('input').focus();
+        });
+
+        /* One row always stays, so the form cannot be emptied by accident. */
+        body.addEventListener('click', function (event) {
+            if (!event.target.classList.contains('xrow')) {
+                return;
+            }
+            if (body.rows.length === 1) {
+                body.rows[0].querySelectorAll('input').forEach(function (i) { i.value = ''; });
+                return;
+            }
+            event.target.closest('tr').remove();
+        });
+    })();
+</script>
+
+</main>
+</body>
+</html>

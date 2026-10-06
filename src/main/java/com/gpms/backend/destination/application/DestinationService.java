@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.gpms.backend.common.service.CurrentUserService;
+import com.gpms.backend.company.domain.Company;
 
 @Service
 @Transactional
@@ -17,16 +19,19 @@ public class DestinationService {
 
     private final DestinationRepository destinationRepository;
     private final DestinationMapper destinationMapper;
+    private final CurrentUserService currentUserService;
 
-    public DestinationService(DestinationRepository destinationRepository, DestinationMapper destinationMapper) {
+    public DestinationService(DestinationRepository destinationRepository, DestinationMapper destinationMapper,
+            CurrentUserService currentUserService) {
         this.destinationRepository = destinationRepository;
         this.destinationMapper = destinationMapper;
+        this.currentUserService = currentUserService;
     }
 
     /** Everything, enabled or not - the management screen needs both. */
     @Transactional(readOnly = true)
     public List<DestinationResponse> getAll() {
-        return destinationRepository.findAllByDeletedFalseOrderByNameAsc()
+        return destinationRepository.findAllByCompanyIdAndDeletedFalseOrderByNameAsc(companyId())
                 .stream()
                 .map(destinationMapper::toResponse)
                 .toList();
@@ -35,19 +40,20 @@ public class DestinationService {
     /** Enabled only - what a dropdown is allowed to offer. */
     @Transactional(readOnly = true)
     public List<DestinationResponse> getActive() {
-        return destinationRepository.findAllByDeletedFalseAndActiveTrueOrderByNameAsc()
+        return destinationRepository.findAllByCompanyIdAndDeletedFalseAndActiveTrueOrderByNameAsc(companyId())
                 .stream()
                 .map(destinationMapper::toResponse)
                 .toList();
     }
 
     public DestinationResponse create(DestinationUpsertRequest request) {
-        destinationRepository.findByNameIgnoreCaseAndDeletedFalse(request.name())
+        destinationRepository.findByNameIgnoreCaseAndCompanyIdAndDeletedFalse(request.name(), companyId())
                 .ifPresent(existing -> {
                     throw new ConflictException("Destination name already exists");
                 });
 
         Destination destination = new Destination();
+        destination.setCompany(company());
         apply(request, destination);
         return destinationMapper.toResponse(destinationRepository.save(destination));
     }
@@ -55,7 +61,7 @@ public class DestinationService {
     public DestinationResponse update(UUID id, DestinationUpsertRequest request) {
         Destination destination = require(id);
 
-        destinationRepository.findByNameIgnoreCaseAndDeletedFalse(request.name())
+        destinationRepository.findByNameIgnoreCaseAndCompanyIdAndDeletedFalse(request.name(), companyId())
                 .filter(existing -> !existing.getId().equals(id))
                 .ifPresent(existing -> {
                     throw new ConflictException("Destination name already exists");
@@ -77,12 +83,30 @@ public class DestinationService {
     }
 
     private Destination require(UUID id) {
-        return destinationRepository.findByIdAndDeletedFalse(id)
+        return destinationRepository.findByIdAndCompanyIdAndDeletedFalse(id, companyId())
                 .orElseThrow(() -> new ResourceNotFoundException("Destination not found"));
     }
 
     private void apply(DestinationUpsertRequest request, Destination destination) {
         destination.setName(request.name().trim());
         destination.setActive(request.active() == null || request.active());
+    }
+
+
+    /*
+     * The company the caller belongs to.
+     *
+     * Every read and every uniqueness check below is fenced by it, so
+     * one client's records are invisible to another even though they
+     * share a table. A lookup by id is scoped too - an id guessed or
+     * copied from somewhere else resolves to nothing rather than to
+     * somebody else's row.
+     */
+    private Company company() {
+        return currentUserService.requireCurrentUser().getCompany();
+    }
+
+    private UUID companyId() {
+        return company().getId();
     }
 }

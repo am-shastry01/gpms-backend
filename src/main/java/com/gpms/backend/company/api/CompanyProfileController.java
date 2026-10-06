@@ -3,7 +3,7 @@ package com.gpms.backend.company.api;
 import com.gpms.backend.company.api.dto.CompanyProfileResponse;
 import com.gpms.backend.company.api.dto.CompanyProfileUpdateRequest;
 import com.gpms.backend.company.application.CompanyProfileService;
-import com.gpms.backend.company.domain.CompanyProfile;
+import com.gpms.backend.company.domain.Company;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -36,7 +36,7 @@ public class CompanyProfileController {
 
     @GetMapping("/logo")
     public ResponseEntity<byte[]> logo() {
-        CompanyProfile profile = companyProfileService.require();
+        Company profile = companyProfileService.require();
         if (profile.getLogoData() == null || profile.getLogoData().length == 0) {
             return ResponseEntity.notFound().build();
         }

@@ -13,4 +13,12 @@ public interface WarehouseRepository extends JpaRepository<Warehouse, UUID> {
     Optional<Warehouse> findByCodeIgnoreCaseAndDeletedFalse(String code);
 
     List<Warehouse> findAllByDeletedFalse();
+
+    // ----- company-scoped (what the tenant API must use) -----
+
+    Optional<Warehouse> findByIdAndCompanyIdAndDeletedFalse(UUID id, UUID companyId);
+
+    Optional<Warehouse> findByCodeIgnoreCaseAndCompanyIdAndDeletedFalse(String code, UUID companyId);
+
+    List<Warehouse> findAllByCompanyIdAndDeletedFalseOrderByNameAsc(UUID companyId);
 }

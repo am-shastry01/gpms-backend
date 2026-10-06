@@ -20,8 +20,18 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
+    /*
+     * Paths where no bearer token is read.
+     *
+     * Only /auth/login belongs here. Every path under /auth used to,
+     * which quietly broke the rest of them: the token
+     * was never read, so the security context stayed empty and
+     * /auth/me and /auth/change-password behaved as if nobody was
+     * signed in - a 403 on a request that carried a perfectly good
+     * token.
+     */
     private static final String[] UNFILTERED_PATHS = {
-            "/api/v1/auth/**",
+            "/api/v1/auth/login",
             "/swagger-ui/**",
             "/swagger-ui.html",
             "/v3/api-docs/**",
@@ -73,7 +83,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String username = jwtService.extractUsername(jwt);
             if (username != null) {
                 UserDetails userDetails = userDetailsService.loadUserByUsername(username);
-                if (jwtService.isTokenValid(jwt, userDetails.getUsername())) {
+                java.time.Instant passwordChangedAt =
+                        userDetails instanceof SecurityUserPrincipal principal
+                                ? principal.getUser().getPasswordChangedAt()
+                                : null;
+
+                if (jwtService.isTokenValid(jwt, userDetails.getUsername(), passwordChangedAt)) {
                     UsernamePasswordAuthenticationToken authenticationToken = new UsernamePasswordAuthenticationToken(
                             userDetails,
                             null,
