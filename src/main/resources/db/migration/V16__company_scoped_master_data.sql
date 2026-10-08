@@ -52,6 +52,256 @@ END $$;
 
 
 -- ---------------------------------------------------------------
+-- RETIRE DUPLICATES BEFORE THE NEW INDEXES GO ON
+--
+-- The old constraints were plain UNIQUE columns, which PostgreSQL
+-- compares case-SENSITIVELY. The new indexes compare on upper(...),
+-- because "Indore" and "INDORE" are one destination to the person
+-- typing them and offering both in a dropdown is a bug.
+--
+-- That means rows which were legal yesterday collide today, and a real
+-- database had exactly that: two live destinations, Indore and INDORE,
+-- in the same company. CREATE UNIQUE INDEX then fails and takes the
+-- whole deployment with it.
+--
+-- So the duplicates are retired first. In each group one row survives
+-- and keeps its own spelling: an enabled row beats a disabled one, and
+-- after that the oldest wins. The rest are marked deleted, which takes
+-- them out of the dropdowns without destroying anything.
+--
+-- Destinations, transport companies and vehicle types are only ever
+-- stored on a gate pass as text, so retiring one changes nothing that
+-- has already been printed. Vendors, drivers and vehicles ARE pointed
+-- at by foreign keys, so anything referring to a duplicate is moved
+-- onto the survivor before that duplicate goes.
+--
+-- Every statement is re-runnable: on a database with no duplicates it
+-- does nothing at all.
+-- ---------------------------------------------------------------
+
+-- ----- lists nothing points at: retire the duplicates outright -----
+
+WITH ranked AS (
+    SELECT id,
+           row_number() OVER (
+               PARTITION BY company_id, upper(name)
+               ORDER BY active DESC, created_at, id
+           ) AS position
+    FROM destinations
+    WHERE deleted = FALSE
+)
+UPDATE destinations target
+SET deleted = TRUE,
+    deleted_at = NOW()
+FROM ranked
+WHERE target.id = ranked.id
+  AND ranked.position > 1;
+
+WITH ranked AS (
+    SELECT id,
+           row_number() OVER (
+               PARTITION BY company_id, upper(name)
+               ORDER BY active DESC, created_at, id
+           ) AS position
+    FROM vehicle_types
+    WHERE deleted = FALSE
+)
+UPDATE vehicle_types target
+SET deleted = TRUE,
+    deleted_at = NOW()
+FROM ranked
+WHERE target.id = ranked.id
+  AND ranked.position > 1;
+
+-- Transport companies are unique on both name and code, so both are
+-- swept - name first, then whatever still collides on code.
+
+WITH ranked AS (
+    SELECT id,
+           row_number() OVER (
+               PARTITION BY company_id, upper(name)
+               ORDER BY active DESC, created_at, id
+           ) AS position
+    FROM transports
+    WHERE deleted = FALSE
+)
+UPDATE transports target
+SET deleted = TRUE,
+    deleted_at = NOW()
+FROM ranked
+WHERE target.id = ranked.id
+  AND ranked.position > 1;
+
+WITH ranked AS (
+    SELECT id,
+           row_number() OVER (
+               PARTITION BY company_id, upper(code)
+               ORDER BY active DESC, created_at, id
+           ) AS position
+    FROM transports
+    WHERE deleted = FALSE
+)
+UPDATE transports target
+SET deleted = TRUE,
+    deleted_at = NOW()
+FROM ranked
+WHERE target.id = ranked.id
+  AND ranked.position > 1;
+
+
+-- ----- rows with foreign keys: move the references, then retire -----
+
+DO $$
+DECLARE
+    duplicate RECORD;
+BEGIN
+
+    /*
+     * Vendors, by name and then by code. A gate pass and a lorry both
+     * point at a vendor, so both are moved onto the survivor first -
+     * otherwise retiring the duplicate would leave a pass pointing at a
+     * vendor that no longer appears anywhere.
+     */
+    FOR duplicate IN
+        WITH ranked AS (
+            SELECT id,
+                   first_value(id) OVER (
+                       PARTITION BY company_id, upper(name)
+                       ORDER BY active DESC, created_at, id
+                   ) AS survivor,
+                   row_number() OVER (
+                       PARTITION BY company_id, upper(name)
+                       ORDER BY active DESC, created_at, id
+                   ) AS position
+            FROM vendors
+            WHERE deleted = FALSE
+        )
+        SELECT id, survivor FROM ranked WHERE position > 1
+    LOOP
+        UPDATE gate_pass_requests SET vendor_id = duplicate.survivor
+        WHERE vendor_id = duplicate.id;
+
+        UPDATE vehicles SET vendor_id = duplicate.survivor
+        WHERE vendor_id = duplicate.id;
+
+        UPDATE vendors SET deleted = TRUE, deleted_at = NOW()
+        WHERE id = duplicate.id;
+    END LOOP;
+
+    FOR duplicate IN
+        WITH ranked AS (
+            SELECT id,
+                   first_value(id) OVER (
+                       PARTITION BY company_id, upper(code)
+                       ORDER BY active DESC, created_at, id
+                   ) AS survivor,
+                   row_number() OVER (
+                       PARTITION BY company_id, upper(code)
+                       ORDER BY active DESC, created_at, id
+                   ) AS position
+            FROM vendors
+            WHERE deleted = FALSE
+        )
+        SELECT id, survivor FROM ranked WHERE position > 1
+    LOOP
+        UPDATE gate_pass_requests SET vendor_id = duplicate.survivor
+        WHERE vendor_id = duplicate.id;
+
+        UPDATE vehicles SET vendor_id = duplicate.survivor
+        WHERE vendor_id = duplicate.id;
+
+        UPDATE vendors SET deleted = TRUE, deleted_at = NOW()
+        WHERE id = duplicate.id;
+    END LOOP;
+
+    /*
+     * Vehicles, by registration number. mp09ab1234 and MP09AB1234 are
+     * the same lorry.
+     */
+    FOR duplicate IN
+        WITH ranked AS (
+            SELECT id,
+                   first_value(id) OVER (
+                       PARTITION BY company_id, upper(registration_number)
+                       ORDER BY active DESC, created_at, id
+                   ) AS survivor,
+                   row_number() OVER (
+                       PARTITION BY company_id, upper(registration_number)
+                       ORDER BY active DESC, created_at, id
+                   ) AS position
+            FROM vehicles
+            WHERE deleted = FALSE
+        )
+        SELECT id, survivor FROM ranked WHERE position > 1
+    LOOP
+        UPDATE gate_pass_requests SET vehicle_id = duplicate.survivor
+        WHERE vehicle_id = duplicate.id;
+
+        UPDATE vehicles SET deleted = TRUE, deleted_at = NOW()
+        WHERE id = duplicate.id;
+    END LOOP;
+
+    /*
+     * Drivers, by mobile number first - that is the one the app looks a
+     * driver up by - and then by licence number, which is compared
+     * case-insensitively and may be null. A null licence is not a
+     * duplicate of another null licence, which is why the index excludes
+     * them and so does this.
+     *
+     * Only gate passes point at a driver; driver_notifications went with
+     * the guard flow in V7.
+     */
+    FOR duplicate IN
+        WITH ranked AS (
+            SELECT id,
+                   first_value(id) OVER (
+                       PARTITION BY company_id, mobile_number
+                       ORDER BY active DESC, created_at, id
+                   ) AS survivor,
+                   row_number() OVER (
+                       PARTITION BY company_id, mobile_number
+                       ORDER BY active DESC, created_at, id
+                   ) AS position
+            FROM drivers
+            WHERE deleted = FALSE
+        )
+        SELECT id, survivor FROM ranked WHERE position > 1
+    LOOP
+        UPDATE gate_pass_requests SET driver_id = duplicate.survivor
+        WHERE driver_id = duplicate.id;
+
+        UPDATE drivers SET deleted = TRUE, deleted_at = NOW()
+        WHERE id = duplicate.id;
+    END LOOP;
+
+    FOR duplicate IN
+        WITH ranked AS (
+            SELECT id,
+                   first_value(id) OVER (
+                       PARTITION BY company_id, upper(license_number)
+                       ORDER BY active DESC, created_at, id
+                   ) AS survivor,
+                   row_number() OVER (
+                       PARTITION BY company_id, upper(license_number)
+                       ORDER BY active DESC, created_at, id
+                   ) AS position
+            FROM drivers
+            WHERE deleted = FALSE
+              AND license_number IS NOT NULL
+        )
+        SELECT id, survivor FROM ranked WHERE position > 1
+    LOOP
+        UPDATE gate_pass_requests SET driver_id = duplicate.survivor
+        WHERE driver_id = duplicate.id;
+
+        UPDATE drivers SET deleted = TRUE, deleted_at = NOW()
+        WHERE id = duplicate.id;
+    END LOOP;
+
+END $$;
+
+
+-- ---------------------------------------------------------------
 -- UNIQUENESS, NOW PER COMPANY
 --
 -- Partial indexes on deleted = FALSE, so a name freed by a deletion
