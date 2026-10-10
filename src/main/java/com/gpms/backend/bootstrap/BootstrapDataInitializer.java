@@ -54,21 +54,30 @@ public class BootstrapDataInitializer implements CommandLineRunner {
         ensureRoles();
 
         /*
-         * Everything below seeds an EMPTY database, and only an empty
-         * one. Once a company exists, companies are the super-admin
-         * site's business and the bootstrap keeps its hands off.
+         * Everything below seeds a database nobody can sign in to yet,
+         * and only that. The test is whether a USER exists - not whether
+         * a COMPANY does, because the V15 migration always leaves one
+         * behind, so a company-based test is true even on a brand-new
+         * database and would skip the very setup it exists to do.
          *
-         * It used to take "the first company ordered by NAME" and add
-         * its warehouse and three default accounts to it on every
-         * startup - so onboarding a client called Acme handed them a
-         * stray Primary Warehouse and an admin, a manager and an
-         * employee they never asked for, because A sorts before Y.
+         * Once there is somebody to sign in as, accounts are the
+         * super-admin site's business and the bootstrap keeps its hands
+         * off. It used to take "the first company ordered by NAME" and
+         * write into it on every startup, so onboarding a client called
+         * Acme handed them a stray Primary Warehouse and an admin, a
+         * manager and an employee they never asked for, because A sorts
+         * before Y.
          */
-        if (!companyRepository.findAllByDeletedFalseOrderByNameAsc().isEmpty()) {
+        if (!userRepository.findAllByDeletedFalse().isEmpty()) {
             return;
         }
 
-        Company company = createCompany();
+        /*
+         * The company the migration left, not a second one beside it.
+         */
+        Company company = companyRepository
+                .findFirstByDeletedFalseOrderByCreatedAtAsc()
+                .orElseGet(this::createCompany);
 
         Warehouse warehouse = warehouseRepository
                 .findByCodeIgnoreCaseAndCompanyIdAndDeletedFalse(

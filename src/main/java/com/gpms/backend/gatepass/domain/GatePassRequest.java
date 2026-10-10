@@ -108,7 +108,12 @@ public class GatePassRequest extends BaseEntity {
     private DigitalSignature adminSignature;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "vendor_id", nullable = false)
+    /*
+     * Optional since V20. A pass is raised for a movement, and a
+     * movement with no consignment on board - an empty vehicle, a
+     * return trip - still has to be authorised at the gate.
+     */
+    @JoinColumn(name = "vendor_id")
     private Vendor vendor;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)

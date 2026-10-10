@@ -113,9 +113,20 @@ public class GatePassRequestService {
         User currentUser = currentUserService.requireCurrentUser();
         Warehouse warehouse = resolveWarehouse(currentUser, request.warehouseId());
         Company company = currentUser.getCompany();
-        Vendor vendor = vendorRepository
-                .findByIdAndCompanyIdAndDeletedFalse(request.vendorId(), company.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("Vendor not found"));
+        /*
+         * No vendor is a legitimate pass.
+         *
+         * A pass is raised for the movement - this vehicle, this
+         * driver, this destination - and the consignments on board are
+         * lines under it. With no consignment there is nobody whose
+         * goods are being carried, so there is no vendor to name. A
+         * vendor that IS named still has to belong to this company.
+         */
+        Vendor vendor = request.vendorId() == null
+                ? null
+                : vendorRepository
+                        .findByIdAndCompanyIdAndDeletedFalse(request.vendorId(), company.getId())
+                        .orElseThrow(() -> new ResourceNotFoundException("Vendor not found"));
         Driver driver = resolveDriver(request, company);
         Vehicle vehicle = resolveVehicle(request, vendor, company);
 
@@ -144,8 +155,19 @@ public class GatePassRequestService {
         gatePassRequest.setGatePassNumber(gatePassNumberGenerator.nextGatePassNumber(company));
         gatePassRequest.setStatus(GatePassStatus.PENDING);
         gatePassRequest.setDispatchDate(request.dispatchDate());
-        gatePassRequest.setPackageCount(request.packageCount());
-        gatePassRequest.setPackageDescription(request.packageDescription().trim());
+        /*
+         * The pass's own summary of its load.
+         *
+         * package_count and package_description are NOT NULL on the
+         * table and are what the list screens show, so they are derived
+         * rather than demanded: a caller that sends neither - which is
+         * what a pass with no consignment sends - still gets a pass
+         * that describes itself honestly.
+         */
+        gatePassRequest.setPackageCount(
+                request.packageCount() == null ? 0 : request.packageCount());
+        gatePassRequest.setPackageDescription(
+                describeLoad(request.packageDescription(), request.items()));
         gatePassRequest.setDestination(request.destination().trim());
         gatePassRequest.setTransportName(trimToNull(request.transportName()));
         gatePassRequest.setInvoiceNumber(trimToNull(request.invoiceNumber()));
@@ -731,9 +753,16 @@ public class GatePassRequestService {
         recipients.add(gatePassRequest.getRequestedBy());
         recipients.addAll(userRepository.findActiveByRoleAndWarehouse("MANAGER", gatePassRequest.getWarehouse().getId()));
         recipients.addAll(userRepository.findActiveByRoleAndWarehouse("ADMIN", gatePassRequest.getWarehouse().getId()));
+        /*
+         * The vendor clause is dropped rather than printed as "null"
+         * when the pass names none, which is normal for a pass with no
+         * consignment on it.
+         */
         String message = "Gate Pass " + gatePassRequest.getGatePassNumber()
                 + " approved for truck " + gatePassRequest.getVehicle().getRegistrationNumber()
-                + " and vendor " + gatePassRequest.getVendor().getName() + ".";
+                + (gatePassRequest.getVendor() == null
+                        ? "."
+                        : " and vendor " + gatePassRequest.getVendor().getName() + ".");
         notificationService.notifyUsers(recipients, gatePassRequest, "Gate pass approved", message);
     }
 
@@ -843,22 +872,76 @@ public class GatePassRequestService {
                 });
     }
 
+    /*
+     * What the pass says it is carrying, in a few words.
+     *
+     * The caller's own description wins. Failing that it is counted
+     * off the lines, and a pass with no lines says so - "-" or an
+     * empty string would read as a field somebody forgot to fill.
+     */
+    private String describeLoad(
+            String packageDescription,
+            List<GatePassItemRequest> items
+    ) {
+
+        if (packageDescription != null && !packageDescription.isBlank()) {
+            return packageDescription.trim();
+        }
+
+        if (items == null || items.isEmpty()) {
+            return "No consignment";
+        }
+
+        if (items.size() == 1) {
+            String only = items.get(0).itemDescription();
+            return only == null || only.isBlank() ? "1 consignment" : only.trim();
+        }
+
+        return items.size() + " consignments";
+    }
+
     private void saveItems(
             GatePassRequest gatePassRequest,
             List<GatePassItemRequest> items,
             String packageDescription,
             Integer packageCount
     ) {
-        List<GatePassItemRequest> effectiveItems = (items == null || items.isEmpty())
-                ? List.of(new GatePassItemRequest(packageDescription, packageCount, "packages"))
-                : items;
+        /*
+         * Nothing sent means nothing recorded.
+         *
+         * This used to invent a single line out of packageDescription
+         * whenever items[] was empty, which is why a pass could never
+         * genuinely have no consignment - the app had to send a
+         * placeholder to get past it, and the printed pass then listed
+         * a consignment that did not exist.
+         *
+         * The flat shape still works: a caller that sends no items but
+         * does name a description gets that one line, which is what
+         * the older API contract promised.
+         */
+        List<GatePassItemRequest> effectiveItems;
+
+        if (items != null && !items.isEmpty()) {
+            effectiveItems = items;
+        } else if (packageDescription != null && !packageDescription.isBlank()) {
+            effectiveItems = List.of(
+                    new GatePassItemRequest(packageDescription, packageCount, "packages"));
+        } else {
+            effectiveItems = List.of();
+        }
         int lineNumber = 1;
         for (GatePassItemRequest item : effectiveItems) {
             GatePassItem entity = new GatePassItem();
             entity.setGatePassRequest(gatePassRequest);
             entity.setLineNumber(lineNumber++);
             entity.setItemDescription(item.itemDescription());
-            entity.setQuantity(item.quantity());
+            /*
+             * quantity is NOT NULL on the table. A line can legitimately
+             * arrive without one - the flat shape sends no count for a
+             * pass that is not counting packages - so an absent quantity
+             * is recorded as zero rather than failing the insert.
+             */
+            entity.setQuantity(item.quantity() == null ? 0 : item.quantity());
             entity.setUnitOfMeasure(item.unitOfMeasure());
             gatePassItemRepository.save(entity);
         }
@@ -991,8 +1074,10 @@ public class GatePassRequestService {
                 gatePassRequest.getStatus(),
                 gatePassRequest.getWarehouse().getId(),
                 gatePassRequest.getWarehouse().getName(),
-                gatePassRequest.getVendor().getId(),
-                gatePassRequest.getVendor().getName(),
+                gatePassRequest.getVendor() == null
+                        ? null : gatePassRequest.getVendor().getId(),
+                gatePassRequest.getVendor() == null
+                        ? null : gatePassRequest.getVendor().getName(),
                 gatePassRequest.getDriver().getId(),
                 gatePassRequest.getDriver().getName(),
                 gatePassRequest.getDriver().getMobileNumber(),

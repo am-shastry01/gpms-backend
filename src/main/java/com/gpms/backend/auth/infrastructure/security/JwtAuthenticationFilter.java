@@ -32,6 +32,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
      */
     private static final String[] UNFILTERED_PATHS = {
             "/api/v1/auth/login",
+            "/api/v1/auth/forgot-password",
+            "/api/v1/auth/forgot-password/send-otp",
             "/swagger-ui/**",
             "/swagger-ui.html",
             "/v3/api-docs/**",

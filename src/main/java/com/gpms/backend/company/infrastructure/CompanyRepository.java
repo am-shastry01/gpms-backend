@@ -12,6 +12,16 @@ public interface CompanyRepository extends JpaRepository<Company, UUID> {
 
     List<Company> findAllByDeletedFalseOrderByNameAsc();
 
+    /*
+     * The first company this deployment ever had.
+     *
+     * By creation time, never by name: the bootstrap used to take the
+     * alphabetically first company and write into it, which meant
+     * onboarding a client called Acme got them a warehouse and three
+     * accounts nobody asked for.
+     */
+    Optional<Company> findFirstByDeletedFalseOrderByCreatedAtAsc();
+
     boolean existsByNameIgnoreCaseAndDeletedFalse(String name);
 
     boolean existsByCodeIgnoreCaseAndDeletedFalse(String code);

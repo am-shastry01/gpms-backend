@@ -59,25 +59,45 @@ public class GatePassPdfService {
     private static final DateTimeFormatter DATE =
             DateTimeFormatter.ofPattern("dd MMM yyyy");
 
-    private static final Color INK = new Color(0x1A, 0x1F, 0x26);
-    private static final Color RULE = new Color(0x9A, 0xA4, 0xB0);
-    private static final Color HAIR = new Color(0xD5, 0xDB, 0xE2);
-    private static final Color MUTED = new Color(0x5A, 0x63, 0x70);
+    /*
+     * The palette, deliberately dark.
+     *
+     * The first version of this page was printed on warehouse laser
+     * printers and came out washed out - grey rules on white, labels so
+     * pale the guard at the gate could not read them in daylight. Every
+     * ink here is a step darker than looks right on a bright screen,
+     * because the screen is not where this document is read.
+     *
+     * INK is near black for everything that must be read at arm's
+     * length. BAND is the dark navy behind the title and the table
+     * header, which is what makes the sheet read as a document rather
+     * than a printout. LABEL_INK is dark enough to survive a toner-low
+     * printer, where the old grey simply vanished.
+     */
+    private static final Color INK = new Color(0x0B, 0x0F, 0x14);
+    private static final Color BAND = new Color(0x15, 0x22, 0x33);
+    private static final Color BAND_TEXT = new Color(0xFF, 0xFF, 0xFF);
+    private static final Color RULE = new Color(0x15, 0x22, 0x33);
+    private static final Color HAIR = new Color(0x8D, 0x98, 0xA6);
+    private static final Color MUTED = new Color(0x3C, 0x45, 0x52);
+    private static final Color WASH = new Color(0xE7, 0xEC, 0xF2);
 
     private static final Font COMPANY =
-            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 20, INK);
+            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 22, INK);
     private static final Font TITLE =
-            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11, INK);
+            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11, BAND_TEXT);
     private static final Font SECTION =
             FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9, INK);
     private static final Font LABEL =
-            FontFactory.getFont(FontFactory.HELVETICA, 8, MUTED);
+            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 7, MUTED);
     private static final Font VALUE =
-            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, INK);
+            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 11, INK);
     private static final Font BODY =
             FontFactory.getFont(FontFactory.HELVETICA, 10, INK);
     private static final Font SMALL =
             FontFactory.getFont(FontFactory.HELVETICA, 8, MUTED);
+    private static final Font TABLE_HEAD =
+            FontFactory.getFont(FontFactory.HELVETICA_BOLD, 8, BAND_TEXT);
     private static final Font NOTICE =
             FontFactory.getFont(FontFactory.HELVETICA_OBLIQUE, 8, MUTED);
 
@@ -163,16 +183,29 @@ public class GatePassPdfService {
         name.setSpacingBefore(2);
         document.add(name);
 
-        Paragraph title = new Paragraph("GATE PASS", TITLE);
-        title.setAlignment(Element.ALIGN_CENTER);
-        title.setSpacingBefore(3);
-        document.add(title);
+        /*
+         * The title sits in a solid dark band rather than as another
+         * line of text. It is the one piece of the page that has to be
+         * recognisable from across a loading bay, and a band survives a
+         * fax, a photocopy and a bad printer in a way grey text does
+         * not.
+         */
+        PdfPTable band = new PdfPTable(1);
+        band.setWidthPercentage(100);
+        band.setSpacingBefore(10);
 
-        document.add(rule(8, RULE));
+        PdfPCell bandCell = new PdfPCell(new Phrase("GATE PASS", TITLE));
+        bandCell.setBackgroundColor(BAND);
+        bandCell.setBorder(Rectangle.NO_BORDER);
+        bandCell.setPadding(7);
+        bandCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+        band.addCell(bandCell);
+
+        document.add(band);
     }
 
     // ---------------------------------------------------------------
-    // 2. GATE PASS NUMBER  |  INVOICE DATE
+    // 2. GATE PASS NUMBER  |  DISPATCH DATE
     // ---------------------------------------------------------------
 
     private void addPassLine(Document document, GatePassRequest pass) throws Exception {
@@ -193,9 +226,18 @@ public class GatePassPdfService {
                 Element.ALIGN_LEFT));
         row.addCell(left);
 
+        /*
+         * The dispatch date, not the invoice date.
+         *
+         * The invoice date belongs to a document this pass travels
+         * with and is often not the day the truck leaves - which is the
+         * only date a gate cares about. Printing the invoice date here
+         * had people reading it as the dispatch date, so the pass now
+         * states the date it is actually for.
+         */
         PdfPCell right = new PdfPCell();
         right.setBorder(Rectangle.NO_BORDER);
-        right.addElement(inline("Invoice date : ", formatDate(pass.getInvoiceDate()),
+        right.addElement(inline("Dispatch date : ", formatDate(pass.getDispatchDate()),
                 Element.ALIGN_RIGHT));
         row.addCell(right);
 
@@ -244,8 +286,16 @@ public class GatePassPdfService {
         field(grid, "Destination", pass.getDestination());
         field(grid, "Warehouse name", pass.getWarehouse() == null
                 ? null : pass.getWarehouse().getName());
-        field(grid, "Dispatch date", formatDate(pass.getDispatchDate()));
 
+        /*
+         * No dispatch date here any more - it is on the header line
+         * beside the gate pass number. One date, printed once, cannot
+         * be read two ways.
+         *
+         * That leaves exactly six fields, which fills two rows of this
+         * three-column grid: an incomplete last row is dropped by
+         * OpenPDF along with the field in it, so the count matters.
+         */
         document.add(grid);
     }
 
@@ -266,10 +316,19 @@ public class GatePassPdfService {
 
         if (items.isEmpty()) {
 
-            PdfPCell empty = new PdfPCell(new Phrase("No consignment recorded.", BODY));
+            /*
+             * A pass with nothing listed is allowed, and says so
+             * plainly. An empty vehicle leaving the yard is a real
+             * movement that a gate still has to authorise, so this is
+             * a normal pass rather than an incomplete one.
+             */
+            PdfPCell empty = new PdfPCell(
+                    new Phrase("No consignment listed on this pass.", BODY));
             empty.setColspan(2);
-            empty.setPadding(6);
-            empty.setBorderColor(HAIR);
+            empty.setPadding(7);
+            empty.setBorder(Rectangle.BOTTOM);
+            empty.setBorderColorBottom(HAIR);
+            empty.setBorderWidthBottom(0.5f);
             table.addCell(empty);
 
         } else {
@@ -277,8 +336,10 @@ public class GatePassPdfService {
             int index = 1;
 
             for (GatePassItem item : items) {
-                bodyCell(table, String.valueOf(index), Element.ALIGN_CENTER);
-                bodyCell(table, nullToDash(item.getItemDescription()), Element.ALIGN_LEFT);
+                boolean shaded = index % 2 == 0;
+                bodyCell(table, String.valueOf(index), Element.ALIGN_CENTER, shaded);
+                bodyCell(table, nullToDash(item.getItemDescription()),
+                        Element.ALIGN_LEFT, shaded);
                 index++;
             }
         }
@@ -373,7 +434,7 @@ public class GatePassPdfService {
             cell.addElement(spacer);
         }
 
-        cell.addElement(rule(2, RULE));
+        cell.addElement(rule(2, RULE, 1.2f));
 
         /*
          * A single space rather than an empty string: OpenPDF drops a
@@ -396,7 +457,7 @@ public class GatePassPdfService {
 
     private void addFooter(Document document, Company company) throws Exception {
 
-        document.add(rule(20, RULE));
+        document.add(rule(20, RULE, 1.6f));
 
         Paragraph notice = new Paragraph(
                 "This is a computer generated gate pass.", NOTICE);
@@ -467,13 +528,59 @@ public class GatePassPdfService {
     // BUILDING BLOCKS
     // ---------------------------------------------------------------
 
-    private Paragraph sectionHeading(String text) {
-        Paragraph heading = new Paragraph(text.toUpperCase(), SECTION);
-        heading.setSpacingBefore(16);
-        return heading;
+    /*
+     * A section heading, with its own dark underline.
+     *
+     * Returned as a one-cell table rather than a paragraph so the
+     * heading and the line beneath it cannot be split across a page
+     * break, which used to leave a stray rule at the top of page two.
+     */
+    private PdfPTable sectionHeading(String text) {
+
+        PdfPTable holder = new PdfPTable(1);
+        holder.setWidthPercentage(100);
+        holder.setSpacingBefore(16);
+
+        PdfPCell cell = new PdfPCell(new Phrase(spaced(text), SECTION));
+        cell.setBorder(Rectangle.BOTTOM);
+        cell.setBorderColorBottom(RULE);
+        cell.setBorderWidthBottom(1.2f);
+        cell.setPaddingBottom(4);
+        cell.setPaddingLeft(0);
+        holder.addCell(cell);
+
+        return holder;
+    }
+
+    /*
+     * Letter-spaced capitals. A heading of five characters reads as a
+     * label rather than a word when it is set tight, and OpenPDF has no
+     * tracking on a Phrase, so the spacing is put in by hand.
+     */
+    private String spaced(String text) {
+
+        StringBuilder builder = new StringBuilder();
+
+        for (char character : text.toUpperCase().toCharArray()) {
+            if (builder.length() > 0) {
+                builder.append(' ');
+            }
+            builder.append(character);
+        }
+
+        return builder.toString();
     }
 
     private PdfPTable rule(float spacingBefore, Color color) {
+        return rule(spacingBefore, color, 1f);
+    }
+
+    /*
+     * A horizontal line. The width is explicit because the default
+     * hairline all but disappears on a warehouse printer, and these
+     * rules are what divide the document into readable blocks.
+     */
+    private PdfPTable rule(float spacingBefore, Color color, float width) {
         PdfPTable line = new PdfPTable(1);
         line.setWidthPercentage(100);
         line.setSpacingBefore(spacingBefore);
@@ -481,6 +588,7 @@ public class GatePassPdfService {
         cell.setFixedHeight(1f);
         cell.setBorder(Rectangle.BOTTOM);
         cell.setBorderColorBottom(color);
+        cell.setBorderWidthBottom(width);
         line.addCell(cell);
         return line;
     }
@@ -496,18 +604,30 @@ public class GatePassPdfService {
     }
 
     private void headerCell(PdfPTable table, String text) {
-        PdfPCell cell = new PdfPCell(new Phrase(text.toUpperCase(), LABEL));
-        cell.setPadding(6);
-        cell.setBackgroundColor(new Color(0xF2, 0xF5, 0xF8));
-        cell.setBorderColor(HAIR);
+        PdfPCell cell = new PdfPCell(new Phrase(text.toUpperCase(), TABLE_HEAD));
+        cell.setPadding(7);
+        cell.setBackgroundColor(BAND);
+        cell.setBorder(Rectangle.NO_BORDER);
         table.addCell(cell);
     }
 
-    private void bodyCell(PdfPTable table, String text, int alignment) {
+    /*
+     * A row of the consignment table. Every other row carries a pale
+     * wash, which is what keeps the eye on one line across a page when
+     * a truck is carrying a dozen consignments.
+     */
+    private void bodyCell(PdfPTable table, String text, int alignment, boolean shaded) {
         PdfPCell cell = new PdfPCell(new Phrase(text, BODY));
-        cell.setPadding(6);
-        cell.setBorderColor(HAIR);
+        cell.setPadding(7);
+        cell.setBorder(Rectangle.BOTTOM);
+        cell.setBorderColorBottom(HAIR);
+        cell.setBorderWidthBottom(0.5f);
         cell.setHorizontalAlignment(alignment);
+
+        if (shaded) {
+            cell.setBackgroundColor(WASH);
+        }
+
         table.addCell(cell);
     }
 

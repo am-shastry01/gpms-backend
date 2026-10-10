@@ -69,6 +69,14 @@ public class SecurityConfig {
                                  * says so below.
                                  */
                                 "/api/v1/auth/login",
+                                /*
+                                 * Also open: somebody who has
+                                 * forgotten their password has no
+                                 * token to send. A throttle stands in
+                                 * for one - see ResetAttemptGuard.
+                                 */
+                                "/api/v1/auth/forgot-password",
+                                "/api/v1/auth/forgot-password/send-otp",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
                                 "/v3/api-docs/**",

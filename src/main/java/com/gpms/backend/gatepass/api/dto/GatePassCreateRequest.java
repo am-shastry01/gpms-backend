@@ -3,14 +3,17 @@ package com.gpms.backend.gatepass.api.dto;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
 public record GatePassCreateRequest(
         UUID warehouseId,
-        @NotNull(message = "Vendor is required")
+        /*
+         * Optional. A pass with no consignment on it names no vendor,
+         * because there is nobody whose goods are being carried.
+         */
         UUID vendorId,
         UUID driverId,
         String driverName,
@@ -19,9 +22,14 @@ public record GatePassCreateRequest(
         UUID vehicleId,
         String truckNumber,
         String vehicleType,
-        @Positive(message = "Package count must be greater than zero")
+        /*
+         * Both optional, and both only used by a caller that sends no
+         * items[]: they are the old flat shape, where a pass carried
+         * one description and one count instead of lines. A pass with
+         * no consignment sends neither, and gets no lines.
+         */
+        @PositiveOrZero(message = "Package count cannot be negative")
         Integer packageCount,
-        @NotBlank(message = "Package description is required")
         String packageDescription,
         @NotBlank(message = "Destination is required")
         String destination,

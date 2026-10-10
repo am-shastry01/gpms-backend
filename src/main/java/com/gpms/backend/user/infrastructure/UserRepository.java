@@ -54,6 +54,18 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     List<User> findByUsernameOrEmailIncludingDeleted(
             @Param("identifier") String identifier);
 
+    /*
+     * Strictly by email, for the forgotten-password form.
+     *
+     * Sign-in accepts a username or an email, but a reset must not:
+     * one person's username can be another person's email, and that
+     * ambiguity has no place in a path that changes a password. The
+     * company travels with it, because a suspended company's staff
+     * may not reset either.
+     */
+    @EntityGraph(attributePaths = {"warehouse", "roles", "company"})
+    Optional<User> findByEmailIgnoreCaseAndDeletedFalse(String email);
+
     @EntityGraph(attributePaths = {"warehouse", "roles"})
     Optional<User> findByIdAndDeletedFalse(UUID id);
 
