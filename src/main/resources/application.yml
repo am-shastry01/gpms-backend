@@ -15,33 +15,6 @@ spring:
   # refuses to start and says which placeholder it could not resolve,
   # which is the failure you want. docker-compose.yml and
   # application-local.yml both supply them for development.
-  # Zoho India SMTP, for the forgotten-password code.
-  #
-  # The password here is NOT the mailbox password: Zoho refuses those
-  # from SMTP once two-factor is on. It is an app-specific password,
-  # generated per application in the Zoho security settings, and it is
-  # read from the environment so it never sits in this file.
-  #
-  # Unset mail means the flow still works end to end on a developer
-  # machine - the code is written to the log instead of sent (see
-  # PasswordResetMailer).
-  mail:
-    host: ${SPRING_MAIL_HOST:smtp.zoho.in}
-    port: ${SPRING_MAIL_PORT:587}
-    username: ${SPRING_MAIL_USERNAME:}
-    password: ${SPRING_MAIL_PASSWORD:}
-    properties:
-      mail:
-        smtp:
-          auth: true
-          # 587 with STARTTLS rather than 465 with implicit SSL: it is
-          # the port least likely to be blocked outbound by a host.
-          starttls:
-            enable: true
-            required: true
-          connectiontimeout: 10000
-          timeout: 10000
-          writetimeout: 10000
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/gpms}
     username: ${SPRING_DATASOURCE_USERNAME}
@@ -142,8 +115,37 @@ app:
       secret-key: ${APP_STORAGE_MINIO_SECRET_KEY}
       bucket: ${APP_STORAGE_MINIO_BUCKET:gpms-attachments}
   mail:
-    # The name a reset email appears under in an inbox.
+    # Who the reset email comes from. Must be an address on a domain
+    # verified in ZeptoMail, or it refuses to send it.
+    from-address: ${APP_MAIL_FROM_ADDRESS:}
+    # The name that address appears under in an inbox.
     from-name: ${APP_MAIL_FROM_NAME:Gate Pass}
+
+    # The sending service, over HTTPS - NOT SMTP.
+    #
+    # Render's free instances block outbound traffic on the SMTP ports
+    # (25, 465, 587), so sending through a mailbox is simply not
+    # possible there: the connection times out before it leaves the
+    # container. This posts to an HTTPS API on 443 instead, which also
+    # makes it independent of whatever plan Zoho Mail is on.
+    #
+    # Either Zoho service fits, because both take the same request:
+    # an Authorization header of "Zoho-enczapikey <token>" and a JSON
+    # body of from / to / subject / textbody.
+    #
+    #   ZeptoMail   https://api.zeptomail.in/v1.1/email
+    #   Zoho CPaaS  https://cpaas.zoho.in/v1.1/email
+    #
+    # Take the exact URL and token from the agent's own setup page
+    # rather than from this comment - the data centre and the path
+    # both vary by account.
+    #
+    # Unset token means the flow still works end to end on a developer
+    # machine: the code is written to the log instead of sent (see
+    # PasswordResetMailer).
+    api:
+      url: ${MAIL_API_URL:https://api.zeptomail.in/v1.1/email}
+      token: ${MAIL_API_TOKEN:}
   password-reset:
     # Long enough to find the mail and type six digits, short enough
     # that a code left in an inbox is not a standing key to the account.
