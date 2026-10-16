@@ -10,6 +10,16 @@ public class MinioProperties {
     private String secretKey;
     private String bucket;
 
+    /*
+     * S3 region. Cloudflare R2 wants the literal "auto"; a real AWS
+     * bucket wants its own region. Left blank the client works it out,
+     * which is right for a self-hosted MinIO.
+     */
+    private String region;
+
+    /** How long a generated photo link stays valid. */
+    private int linkExpiryMinutes = 60;
+
     public String getEndpoint() {
         return endpoint;
     }
@@ -36,6 +46,22 @@ public class MinioProperties {
 
     public String getBucket() {
         return bucket;
+    }
+
+    public String getRegion() {
+        return region;
+    }
+
+    public void setRegion(String region) {
+        this.region = region;
+    }
+
+    public int getLinkExpiryMinutes() {
+        return linkExpiryMinutes;
+    }
+
+    public void setLinkExpiryMinutes(int linkExpiryMinutes) {
+        this.linkExpiryMinutes = linkExpiryMinutes;
     }
 
     public void setBucket(String bucket) {

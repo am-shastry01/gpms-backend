@@ -107,6 +107,11 @@ app:
     # session - eight hours is one shift.
     access-token-minutes: ${APP_JWT_ACCESS_MINUTES:480}
   storage:
+    # S3 storage for gate pass photos.
+    #
+    # Named "minio" because that is the client library; any
+    # S3-compatible service works, and on Render it is Cloudflare R2.
+    # Nothing here runs a MinIO server - docker-compose does, locally.
     minio:
       endpoint: ${APP_STORAGE_MINIO_ENDPOINT:http://localhost:9000}
       # Same reasoning as the datasource above: minioadmin/minioadmin
@@ -114,6 +119,11 @@ app:
       access-key: ${APP_STORAGE_MINIO_ACCESS_KEY}
       secret-key: ${APP_STORAGE_MINIO_SECRET_KEY}
       bucket: ${APP_STORAGE_MINIO_BUCKET:gpms-attachments}
+      # R2 wants the literal "auto". A real AWS bucket wants its own
+      # region. Blank is right for the local MinIO.
+      region: ${APP_STORAGE_MINIO_REGION:}
+      # How long a photo link stays valid once a pass is opened.
+      link-expiry-minutes: ${APP_STORAGE_LINK_EXPIRY_MINUTES:60}
   mail:
     # Who the reset email comes from. Must be an address on a domain
     # verified in ZeptoMail, or it refuses to send it.

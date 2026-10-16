@@ -348,7 +348,13 @@ public class GatePassRequestService {
                 saved.getFileName(),
                 saved.getContentType(),
                 saved.getObjectKey(),
-                saved.getObjectUrl(),
+                /*
+                 * A signed link, not the stored url. The bucket is
+                 * private, and the phone opens this in an image viewer
+                 * that sends no token of its own.
+                 */
+                objectStorageService.presignedUrl(
+                        saved.getObjectKey(), saved.getObjectUrl()),
                 saved.getSizeBytes(),
                 saved.getCreatedAt()
         );
@@ -1061,7 +1067,14 @@ public class GatePassRequestService {
                         attachment.getFileName(),
                         attachment.getContentType(),
                         attachment.getObjectKey(),
-                        attachment.getObjectUrl(),
+                        /*
+                         * Signed afresh every time the pass is read,
+                         * because a link with an expiry cannot be
+                         * stored in a column and still work next week.
+                         */
+                        objectStorageService.presignedUrl(
+                                attachment.getObjectKey(),
+                                attachment.getObjectUrl()),
                         attachment.getSizeBytes(),
                         attachment.getCreatedAt()
                 ))
